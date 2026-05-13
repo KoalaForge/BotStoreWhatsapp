@@ -1,0 +1,38 @@
+name: GHCR Cleanup
+
+# Prune old container image versions from GHCR to bound storage.
+# Keeps the latest 10 tagged versions + protects the `latest` tag.
+# Runs weekly (Sun 03:00 UTC) and on-demand via workflow_dispatch.
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      min_versions_to_keep:
+        description: 'Minimum versions to keep'
+        required: false
+        default: '10'
+      dry_run:
+        description: 'Dry run (no deletions)'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  cleanup:
+    name: Prune GHCR versions
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Delete old container versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: 'koalastore.bot-wa'
+          package-type: 'container'
+          min-versions-to-keep: ${{ github.event.inputs.min_versions_to_keep || '10' }}
+          delete-only-untagged-versions: 'false'
+          ignore-versions: '^latest$'
+          dry-run: ${{ github.event.inputs.dry_run || 'false' }}
