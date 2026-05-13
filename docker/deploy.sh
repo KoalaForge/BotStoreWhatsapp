@@ -41,21 +41,22 @@ now_ms() {
 }
 
 wait_for_healthy() {
-    local service="$1"
-    local timeout="$2"
+    local target="$1"
+    local label="$2"
+    local timeout="$3"
     local elapsed=0
 
     while [ "$elapsed" -lt "$timeout" ]; do
         local health
-        health=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "unknown")
+        health=$(docker inspect --format='{{.State.Health.Status}}' "$target" 2>/dev/null || echo "unknown")
 
         case "$health" in
             healthy)
                 return 0
                 ;;
             unhealthy)
-                log_error "$service is unhealthy!"
-                docker logs --tail 20 "$service" 2>&1 || true
+                log_error "$label is unhealthy!"
+                docker logs --tail 20 "$target" 2>&1 || true
                 return 1
                 ;;
             *)
@@ -65,9 +66,15 @@ wait_for_healthy() {
         esac
     done
 
-    log_error "$service did not become healthy within ${timeout}s"
-    docker logs --tail 20 "$service" 2>&1 || true
+    log_error "$label did not become healthy within ${timeout}s"
+    docker logs --tail 20 "$target" 2>&1 || true
     return 1
+}
+
+# Resolve compose service -> running container ID (handles container_name override)
+resolve_container_id() {
+    local service="$1"
+    docker compose -f "$COMPOSE_FILE" ps -q "$service" 2>/dev/null | head -n1
 }
 
 deploy_service() {
@@ -76,7 +83,9 @@ deploy_service() {
     log_step "Deploying ${service}..."
 
     local was_running=false
-    if docker ps --format '{{.Names}}' | grep -q "^${service}$"; then
+    local existing_id
+    existing_id=$(resolve_container_id "$service")
+    if [ -n "$existing_id" ] && docker ps -q --no-trunc | grep -q "$existing_id"; then
         was_running=true
     fi
 
@@ -91,8 +100,16 @@ deploy_service() {
     log_info "Starting ${service} with new image..."
     docker compose -f "$COMPOSE_FILE" up -d --no-deps "$service" 2>&1
 
+    # Resolve container ID AFTER recreate (container_name may differ from service name)
+    local container_id
+    container_id=$(resolve_container_id "$service")
+    if [ -z "$container_id" ]; then
+        log_error "Could not resolve container ID for service '${service}' after start"
+        return 1
+    fi
+
     log_info "Waiting for ${service} to become healthy (timeout: ${HEALTH_TIMEOUT}s)..."
-    if wait_for_healthy "$service" "$HEALTH_TIMEOUT"; then
+    if wait_for_healthy "$container_id" "$service" "$HEALTH_TIMEOUT"; then
         local stop_end
         stop_end=$(now_ms)
         local downtime_ms=$((stop_end - stop_start))
