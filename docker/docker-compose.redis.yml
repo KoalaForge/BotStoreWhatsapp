@@ -1,0 +1,58 @@
+# ============================================================
+# Redis - Docker Compose
+# ============================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: always
+    stop_grace_period: 15s
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - "60 1000"
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --protected-mode
+      - "yes"
+      # Storage caps — prevent unbounded disk growth
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
+      - --auto-aof-rewrite-percentage
+      - "100"
+      - --auto-aof-rewrite-min-size
+      - "64mb"
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "6379"
+    # Cap container log disk usage
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  redis-data:
+
+networks:
+  backend:
+    external: true

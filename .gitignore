@@ -1,0 +1,6 @@
+.idea
+*.zip
+.env.prod
+node_modules
+.env
+auth_info_*

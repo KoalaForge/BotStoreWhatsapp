@@ -1,0 +1,10 @@
+node_modules
+.git
+.env
+.env.prod
+*.zip
+.idea
+docker
+docs
+tests
+auth_info_*

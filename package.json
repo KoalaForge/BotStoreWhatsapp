@@ -1,0 +1,44 @@
+{
+  "name": "autoorder_whatsapp",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "description": "WhatsApp e-commerce bot powered by Baileys - Clone of OrkutTelegram5.0",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^10.0.1",
+    "@hapi/boom": "^10.0.1",
+    "axios": "^1.7.7",
+    "baileys": "^6.7.21",
+    "canvas": "^3.2.0",
+    "cli-color": "^2.0.4",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.0",
+    "fastify-plugin": "^4.5.1",
+    "figlet": "^1.7.0",
+    "jsdom": "^26.1.0",
+    "link-preview-js": "^3.0.5",
+    "moment-timezone": "^0.5.45",
+    "mongodb": "^6.12.0",
+    "mongoose": "^8.6.3",
+    "p-queue": "^6.6.2",
+    "pdfkit": "^0.17.2",
+    "pino": "^9.6.0",
+    "qr-code-styling": "^1.9.2",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "readline-sync": "^1.4.10",
+    "redis": "^5.11.0"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
