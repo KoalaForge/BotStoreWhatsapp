@@ -320,6 +320,31 @@ class WaBotManager {
     }
 
     /**
+     * Restart a bot: stop socket, then reconnect with existing auth.
+     * Preserves session — no re-pairing required.
+     */
+    async restartBot(botId) {
+        const botDoc = await userWhatsappBotModel.findById(botId);
+        if (!botDoc) {
+            throw new NotFoundException('Bot tidak ditemukan');
+        }
+
+        if (this.bots.has(botId)) {
+            await this.stopBot(botId);
+        }
+
+        await userWhatsappBotModel.updateOne(
+            { _id: botId },
+            { $set: { isActive: true, isSuspended: false } }
+        );
+
+        const updatedDoc = await userWhatsappBotModel.findById(botId);
+        await this.startBot(updatedDoc);
+
+        log('INFO', `Bot ${botId} restarted`);
+    }
+
+    /**
      * Update bot configuration.
      * @param {Object} params
      * @param {string} params.botId

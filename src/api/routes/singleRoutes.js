@@ -285,6 +285,23 @@ async function singleRoutes(fastify, options) {
         };
     });
 
+    fastify.post('/:id/restart', async (request, reply) => {
+        // Stop existing socket if running, then start fresh with stored auth.
+        if (connection.sock || connection.isRunning) {
+            await connection.disconnect();
+        }
+        connection.start().catch(() => { /* errors surface via events */ });
+        return reply.code(202).send({
+            success: true,
+            code: 202,
+            message: 'Restart initiated. Watch /ws/qr/:botId or poll /:id for state.',
+            data: {
+                bot_id: SINGLE_BOT_ID,
+                state: 'restarting'
+            }
+        });
+    });
+
     fastify.delete('/:id', async () => {
         // Clear webhook config FIRST so disconnect() doesn't emit a doomed
         // bot_disconnected event after the integrator deleted the bot.

@@ -4,6 +4,7 @@ const {
     deleteBotController,
     deactivateBotController,
     reactivateBotController,
+    restartBotController,
     listBotsController,
     getBotController,
     requestPairingCodeController,
@@ -43,6 +44,11 @@ async function botRoutes(fastify, options) {
     fastify.post('/:id/reactivate', {
         schema: schemas.botIdParamSchema
     }, reactivateBotController(waBotManager));
+
+    // Restart bot (stop socket + reconnect with existing auth)
+    fastify.post('/:id/restart', {
+        schema: schemas.botIdParamSchema
+    }, restartBotController(waBotManager));
 
     // Request new pairing code for existing bot
     fastify.post('/:id/pairing-code', {

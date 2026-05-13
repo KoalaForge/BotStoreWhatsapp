@@ -9,6 +9,7 @@ module.exports = {
     deleteBotController: require('./deleteBotController'),
     deactivateBotController: require('./deactivateBotController'),
     reactivateBotController: require('./reactivateBotController'),
+    restartBotController: require('./restartBotController'),
     listBotsController: require('./listBotsController'),
     getBotController: require('./getBotController'),
     requestPairingCodeController: require('./requestPairingCodeController'),
