@@ -2,8 +2,6 @@
 
 WhatsApp e-commerce bot powered by [Baileys](https://github.com/WhiskeySockets/Baileys). SaaS-ready: run one number (SINGLE) or many numbers per Mongo-stored config (MULTI).
 
-Sibling project: [`OrkutTelegram5.0`](../OrkutTelegram5.0) — shares deploy patterns.
-
 ---
 
 ## Features
