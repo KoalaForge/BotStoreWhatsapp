@@ -61,5 +61,19 @@ const csCommand = async (ctx) => {
     }
 };
 
+/**
+ * Build compact inline CS line for embedding in other screens (e.g., list produk).
+ * Returns null when no CS configured so caller can omit the section.
+ * @param {Array} rawCsLinks
+ * @returns {string|null}
+ */
+function buildCSInline(rawCsLinks) {
+    const csLinks = settingsService.normalizeCSLinks(rawCsLinks || []);
+    if (csLinks.length === 0) return null;
+    const items = csLinks.map(cs => `${cs.label} ${buildUrl(cs.link)}`).join(' · ');
+    return `*CS:* ${items}`;
+}
+
 module.exports = csCommand;
 module.exports.buildCSContent = buildCSContent;
+module.exports.buildCSInline = buildCSInline;

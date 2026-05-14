@@ -12,6 +12,7 @@ const settingsService = require("../services/settingsService");
 const screenState = require('../state/screenState');
 const moment = require('moment-timezone');
 const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
+const { resolveBanner, sendWithBanner } = require('../utils/bannerResolver');
 
 /**
  * Resolve variant context for both normal and reseller products.
@@ -179,14 +180,16 @@ async function prepareOrder(ctx, quantity = 1) {
     if (!ctx.session) ctx.session = {};
     ctx.session.lastOrderMessage = data;
 
-    return { data, menuText, variantCode: variantValue, productCode: product.code };
+    const banner = resolveBanner(settings);
+
+    return { data, menuText, variantCode: variantValue, productCode: product.code, banner };
 }
 
 async function showPesanan(ctx) {
     try {
         const result = await prepareOrder(ctx);
         if (!result) return;
-        return ctx.reply(`${result.data}${result.menuText}`);
+        return sendWithBanner(ctx, `${result.data}${result.menuText}`, result.banner);
     } catch (err) {
         console.error(`[ ERROR ] [${moment().format('YYYY-MM-DD HH:mm:ss')}]:`, {
             userId: ctx.from,

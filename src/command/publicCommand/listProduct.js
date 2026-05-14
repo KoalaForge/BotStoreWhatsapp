@@ -10,6 +10,8 @@ const settingsService = require('../../services/settingsService');
 const resellerService = require('../../services/resellerService');
 const { formatMoney } = require('../../database/models/money');
 const screenState = require('../../state/screenState');
+const { resolveBanner, sendWithBanner } = require('../../utils/bannerResolver');
+const { buildCSInline } = require('./cs');
 
 const listProduct = async (ctx, pageNumber = 1) => {
     try {
@@ -74,8 +76,23 @@ const listProduct = async (ctx, pageNumber = 1) => {
 
         // --- Build message ---
         const lines = [];
+        const banner = resolveBanner(setting);
+        const csLine = buildCSInline(setting?.csLinks);
 
-        // Header
+        // Shortcut block on top — visible even with many products
+        lines.push('*Perintah:*');
+        lines.push('· `.saldo` — Cek & top-up saldo');
+        lines.push('· `.stok` — Lihat stok lengkap');
+        lines.push('· `riwayat` — Riwayat transaksi');
+        lines.push('· `cara order` — Panduan order lengkap');
+        lines.push('· `.cs` — Hubungi customer service');
+        lines.push('');
+
+        if (csLine) {
+            lines.push(csLine);
+            lines.push('');
+        }
+
         lines.push(`*Saldo:* ${formatMoney(balance)}`);
         lines.push('');
 
@@ -103,16 +120,9 @@ const listProduct = async (ctx, pageNumber = 1) => {
             if (variants.length <= 1) lines.push('');
         });
 
-        // Guide
-        lines.push('*Perintah:*');
-        lines.push('· `.saldo` — Cek & top-up saldo');
-        lines.push('· `.stok` — Lihat stok lengkap');
-        lines.push('· `riwayat` — Riwayat transaksi');
-        lines.push('· `cara order` — Panduan order lengkap');
-
         screenState.setScreen(jid, 'PRODUCT_LIST', {});
 
-        await ctx.reply(lines.join('\n'));
+        await sendWithBanner(ctx, lines.join('\n'), banner);
 
     } catch (err) {
         console.log(err);

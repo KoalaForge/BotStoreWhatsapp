@@ -12,6 +12,7 @@ const settingsService = require("../services/settingsService");
 const screenState = require('../state/screenState');
 const moment = require('moment-timezone');
 const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
+const { resolveBanner, sendWithBanner } = require('../utils/bannerResolver');
 
 /**
  * Handle quantity change for an order in WhatsApp.
@@ -123,7 +124,8 @@ async function plusMinesStockProduct(ctx, variantCode, newQuantity) {
             orderMessage: data
         });
 
-        await ctx.reply(`${data}${menuText}`);
+        const banner = resolveBanner(settings);
+        await sendWithBanner(ctx, `${data}${menuText}`, banner);
     } catch (err) {
         console.error(`[ ERROR ] [${moment().format('YYYY-MM-DD HH:mm:ss')}]:`, {
             userId: ctx.from,

@@ -5,6 +5,7 @@ const { getStockTerjualBatch } = require("../utils/stockUtils");
 const { buildVariantItems } = require("../utils/variantDisplayHelper");
 const { formatCurrency } = require("../utils/waFormatter");
 const screenState = require('../state/screenState');
+const { resolveFromCtx, sendWithBanner } = require('../utils/bannerResolver');
 
 /**
  * Extract product selector from callback data or message text.
@@ -45,7 +46,10 @@ async function handleProductList(ctx) {
 
         const ownerId = ctx.repositoryContext?.ownerId;
 
-        const variantItems = await buildVariantItems(ctx, getProduct, ownerId);
+        const [variantItems, banner] = await Promise.all([
+            buildVariantItems(ctx, getProduct, ownerId),
+            resolveFromCtx(ctx)
+        ]);
 
         if (variantItems.length === 0) {
             return ctx.reply('*Variasi belum tersedia untuk produk ini.*\n\nKetik `list` untuk kembali ke daftar produk.');
@@ -78,7 +82,11 @@ async function handleProductList(ctx) {
             productCode: getProduct.code
         });
 
-        await ctx.reply(`${text}\n_Ketik nomor variasi untuk memilih._\n_Ketik *0* atau *kembali* untuk kembali._`);
+        await sendWithBanner(
+            ctx,
+            `${text}\n_Ketik nomor variasi untuk memilih._\n_Ketik *0* atau *kembali* untuk kembali._`,
+            banner
+        );
     } catch (err) {
         console.log(err);
         ctx.reply("*Terjadi kesalahan, silakan coba lagi.*");
