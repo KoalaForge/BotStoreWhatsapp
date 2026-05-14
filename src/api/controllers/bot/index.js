@@ -13,5 +13,6 @@ module.exports = {
     listBotsController: require('./listBotsController'),
     getBotController: require('./getBotController'),
     requestPairingCodeController: require('./requestPairingCodeController'),
+    requestQrController: require('./requestQrController'),
     listWebhookLogsController: require('./listWebhookLogsController')
 };

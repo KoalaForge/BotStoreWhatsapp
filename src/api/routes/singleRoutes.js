@@ -255,6 +255,27 @@ async function singleRoutes(fastify, options) {
         };
     });
 
+    fastify.post('/:id/qr', async (request, reply) => {
+        if (connection.isRunning) {
+            throw new BadRequestException('Bot is already connected. No QR needed.');
+        }
+
+        connection.switchToQrMode().catch((e) => {
+            console.error(`switchToQrMode failed for ${SINGLE_BOT_ID}:`, e && e.message ? e.message : e);
+        });
+
+        return reply.code(202).send({
+            success: true,
+            code: 202,
+            message: 'QR generation initiated. Watch webhook qr_generated or /ws/qr/:botId.',
+            data: {
+                bot_id: SINGLE_BOT_ID,
+                qr_ws_url: `/ws/qr/${SINGLE_BOT_ID}`,
+                phone_number: connection.phoneNumber
+            }
+        });
+    });
+
     fastify.post('/:id/deactivate', async () => {
         await connection.disconnect();
         return {

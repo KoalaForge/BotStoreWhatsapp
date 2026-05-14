@@ -593,6 +593,25 @@ class WaConnection extends EventEmitter {
     }
 
     /**
+     * Force QR pairing flow. Closes socket without logout (preserves creds),
+     * then re-starts in QR mode so Baileys emits fresh QR via connection.update.
+     * If creds are still valid, Baileys reconnects silently — caller should
+     * listen for both `qr_generated` and `bot_connected` events.
+     */
+    async switchToQrMode() {
+        this._autoRequestPairing = false;
+        this._pairingCodeRequested = false;
+
+        try {
+            await this.disconnect();
+        } catch (e) {
+            // socket may already be closed — ignore
+        }
+
+        await this.start({ pairingCode: false });
+    }
+
+    /**
      * Disconnect without logging out (preserves session for reconnect).
      */
     async disconnect() {

@@ -8,6 +8,7 @@ const {
     listBotsController,
     getBotController,
     requestPairingCodeController,
+    requestQrController,
     listWebhookLogsController
 } = require('../controllers/bot');
 const schemas = require('../schemas/botSchemas');
@@ -54,6 +55,11 @@ async function botRoutes(fastify, options) {
     fastify.post('/:id/pairing-code', {
         schema: schemas.pairingCodeSchema
     }, requestPairingCodeController(waBotManager));
+
+    // Force fresh QR generation (fire-and-forget; delivery via webhook + WS)
+    fastify.post('/:id/qr', {
+        schema: schemas.botIdParamSchema
+    }, requestQrController(waBotManager));
 
     // List bots
     fastify.get('/', {
