@@ -166,6 +166,22 @@ function registerHandlers(router) {
             return;
         }
 
+        // Top-up nominal shortcut: "topup <nominal>"
+        if ((match = text.match(/^topup\s+(\d+)$/i))) {
+            const nominal = parseInt(match[1], 10);
+            if (nominal < 5000) {
+                await ctx.reply('*Nominal tidak valid.* Minimal top-up Rp 5.000.');
+                return;
+            }
+            if (nominal > 10000000) {
+                await ctx.reply('*Nominal terlalu besar.* Maksimal top-up Rp 10.000.000.');
+                return;
+            }
+            ctx.callbackData = `topup-${nominal}`;
+            await actions.handleTopUpNominal(ctx);
+            return;
+        }
+
         // Text shortcuts
         if (/^list\s*produk$/i.test(lower)) { await command.listProduct(ctx); return; }
         if (/^cara\s*order$/i.test(lower)) { await command.helpCommand(ctx); return; }
