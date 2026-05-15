@@ -1,6 +1,6 @@
 const { formatMoney } = require('../database/models/money');
 
-const MAX_WA_TEXT = 3800;     // text-only message safe limit (vs 65536 hard cap)
+const MAX_WA_TEXT = 6500;     // text-only message safe limit (vs 65536 hard cap)
 const MAX_WA_CAPTION = 1024;  // image caption hard limit
 
 function renderWelcomeHeader(displayName, companyName, greeting) {
