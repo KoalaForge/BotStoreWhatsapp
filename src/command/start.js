@@ -12,6 +12,9 @@ const { formatMoney } = require('../database/models/money');
 const modeService = require('../services/modeService');
 const productRepository = require('../repositories/ProductRepository');
 const listProduct = require('./publicCommand/listProduct');
+const { buildGreeting } = require('../utils/greetingHelper');
+const { getCompanyName } = require('../utils/getCompanyName');
+const { renderWelcomeHeader } = require('../utils/menuFormatter');
 
 const startCommand = async (ctx) => {
     try {
@@ -58,10 +61,10 @@ const startCommand = async (ctx) => {
 
         // Build message
         const displayName = user.first_name || user.phone || jid;
-        const currentDateTime = moment().locale('id-ID').tz('Asia/Jakarta').format('dddd, D MMMM YYYY HH:mm:ss');
+        const greeting = buildGreeting();
+        const companyName = await getCompanyName(setting, ctx.state?.botId);
 
-        let profileMessage = `Halo, ${displayName}!\n`;
-        profileMessage += `*${currentDateTime}*\n\n`;
+        let profileMessage = renderWelcomeHeader(displayName, companyName, greeting) + '\n\n';
         profileMessage += `*Info Pengguna*\n`;
         profileMessage += `> ID: ${ctx.phoneNumber}\n`;
         profileMessage += `> Nama: ${user.first_name || 'N/A'}\n`;

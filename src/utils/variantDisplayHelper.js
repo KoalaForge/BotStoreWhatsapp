@@ -24,6 +24,7 @@ async function buildVariantItems(ctx, product, ownerId) {
                 price: item.sellPrice,
                 stock: item.platformStockCount,
                 code: item.platformVariantCode,
+                description: item.platformVariant?.descriptionVariant || product.description || null,
                 tierHint
             });
         }
@@ -48,6 +49,7 @@ async function buildVariantItems(ctx, product, ownerId) {
                 price: prices[i],
                 stock: stockMap.get(data.codeVariant) || 0,
                 code: data.codeVariant,
+                description: data.descriptionVariant || product.description || null,
                 tierHint: tierHints[i]
             });
         }
