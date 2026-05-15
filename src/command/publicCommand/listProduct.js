@@ -76,9 +76,11 @@ const listProduct = async (ctx) => {
         allProducts.forEach((product, i) => {
             const variants = variantsByProduct[i] || [];
             if (variants.length === 0) return;
+            const productIndex = i + 1;
             for (const v of variants) {
                 const sold = soldMap.get(v.code) || 0;
                 lines.push(renderVariantCard({
+                    productIndex,
                     productName: product.name,
                     variant: v,
                     soldCount: sold
@@ -87,7 +89,8 @@ const listProduct = async (ctx) => {
             }
         });
 
-        lines.push('_Ketik nomor produk untuk lihat varian lengkap._');
+        lines.push('_Ketik nomor produk (mis. `1`) untuk lihat semua varian._');
+        lines.push('_Atau pakai pintasan langsung:_ `buy <kode> <jumlah>` _/_ `buynow <kode> <jumlah>`');
 
         screenState.setScreen(jid, 'PRODUCT_LIST', {});
 

@@ -33,7 +33,7 @@ function renderPintasanBlock() {
     ]);
 }
 
-function renderVariantCard({ productName, variant, soldCount }) {
+function renderVariantCard({ productIndex, productName, variant, soldCount }) {
     const stockText = variant.stock > 0 ? String(variant.stock) : 'HABIS ❌';
     const body = [
         `💵 | Harga     : ${formatMoney(variant.price)}`,
@@ -47,7 +47,10 @@ function renderVariantCard({ productName, variant, soldCount }) {
     if (variant.description) {
         body.push(`📝 | Deskripsi : ${variant.description}`);
     }
-    return renderSectionBlock(`${productName} — ${variant.name}`, body);
+    const title = productIndex
+        ? `#${productIndex} · ${productName} — ${variant.name}`
+        : `${productName} — ${variant.name}`;
+    return renderSectionBlock(title, body);
 }
 
 module.exports = {
