@@ -1,6 +1,7 @@
 const { formatMoney } = require('../database/models/money');
 
-const MAX_WA_CHARS = 3800;
+const MAX_WA_TEXT = 3800;     // text-only message safe limit (vs 65536 hard cap)
+const MAX_WA_CAPTION = 1024;  // image caption hard limit
 
 function renderWelcomeHeader(displayName, companyName, greeting) {
     return [
@@ -12,8 +13,8 @@ function renderWelcomeHeader(displayName, companyName, greeting) {
 }
 
 function renderSectionBlock(title, bodyLines) {
-    const header = `─── [ ${title} ] ───`;
-    const closing = '─'.repeat([...header].length);
+    const header = `────── [ ${title} ] ──────`;
+    const closing = '───────────────────── '.repeat([...header].length);
     return [header, ...bodyLines.map(l => `  ${l}`), closing].join('\n');
 }
 
@@ -51,15 +52,17 @@ function renderVariantCard({ productName, variant, soldCount }) {
     return renderSectionBlock(`${productName} — ${variant.name}`, body);
 }
 
-function chunkMessage(fullText) {
-    if (fullText.length <= MAX_WA_CHARS) return [fullText];
+function chunkMessage(fullText, firstMax = MAX_WA_TEXT, restMax = MAX_WA_TEXT) {
+    if (fullText.length <= firstMax) return [fullText];
     const lines = fullText.split('\n');
     const chunks = [];
     let buf = '';
+    let limit = firstMax;
     for (const line of lines) {
-        if ((buf + '\n' + line).length > MAX_WA_CHARS && buf) {
+        if ((buf + '\n' + line).length > limit && buf) {
             chunks.push(buf);
             buf = line;
+            limit = restMax;
         } else {
             buf = buf ? `${buf}\n${line}` : line;
         }
@@ -74,5 +77,7 @@ module.exports = {
     renderPanduanBlock,
     renderPintasanBlock,
     renderVariantCard,
-    chunkMessage
+    chunkMessage,
+    MAX_WA_TEXT,
+    MAX_WA_CAPTION
 };
