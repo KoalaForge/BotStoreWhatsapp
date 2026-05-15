@@ -1,7 +1,6 @@
 const clc = require('cli-color');
 const moment = require('moment-timezone');
 const productRepository = require('../../repositories/ProductRepository');
-const orderTransactionItemRepository = require('../../repositories/OrderTransactionItemRepository');
 const botUserRepository = require('../../repositories/BotUserRepository');
 const botUserBalanceRepository = require('../../repositories/BotUserBalanceRepository');
 const settingsService = require('../../services/settingsService');
@@ -10,6 +9,7 @@ const screenState = require('../../state/screenState');
 const { resolveBanner, sendWithBanner } = require('../../utils/bannerResolver');
 const { buildCSInline } = require('./cs');
 const { buildVariantItems } = require('../../utils/variantDisplayHelper');
+const { getStockTerjualBatch } = require('../../utils/stockUtils');
 const { buildGreeting } = require('../../utils/greetingHelper');
 const { getCompanyName } = require('../../utils/getCompanyName');
 const {
@@ -25,11 +25,10 @@ const listProduct = async (ctx) => {
         const displayName = ctx.fromUser?.first_name || jid;
         const ownerId = ctx.repositoryContext?.ownerId;
 
-        const [setting, userBalance, allProducts, soldMap] = await Promise.all([
+        const [setting, userBalance, allProducts] = await Promise.all([
             settingsService.getSettings(ctx),
             botUserBalanceRepository.findByUserId(ctx, jid),
-            productRepository.findActiveProducts(ctx, { sort: { name: 1 } }),
-            orderTransactionItemRepository.batchSoldCount(ctx)
+            productRepository.findActiveProducts(ctx, { sort: { name: 1 } })
         ]);
 
         botUserRepository.upsertWhatsappUser(ctx, jid, displayName).catch(() => {});
@@ -54,6 +53,9 @@ const listProduct = async (ctx) => {
             getCompanyName(setting, ctx.state?.botId),
             Promise.all(allProducts.map(p => buildVariantItems(ctx, p, ownerId)))
         ]);
+
+        const allVariantCodes = variantsByProduct.flat().map(v => v.code);
+        const soldMap = await getStockTerjualBatch(ctx, allVariantCodes);
 
         const greeting = buildGreeting();
         const banner = resolveBanner(setting);
