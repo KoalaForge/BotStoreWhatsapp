@@ -14,7 +14,7 @@ function renderWelcomeHeader(displayName, companyName, greeting) {
 
 function renderSectionBlock(title, bodyLines) {
     const header = `────── [ ${title} ] ──────`;
-    const closing = '───────────────────── '.repeat([...header].length);
+    const closing = '───────────────────── ';
     return [header, ...bodyLines.map(l => `  ${l}`), closing].join('\n');
 }
 
