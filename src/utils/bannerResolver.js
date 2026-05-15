@@ -16,13 +16,13 @@ async function resolveFromCtx(ctx) {
     return resolveBanner(setting);
 }
 
-async function sendWithBanner(ctx, text, bannerSource) {
-    if (!bannerSource) return ctx.reply(text);
+async function sendWithBanner(ctx, text, bannerSource, options = {}) {
+    if (!bannerSource) return ctx.reply(text, options);
     try {
-        return await ctx.sendImage(bannerSource, text);
+        return await ctx.sendImage(bannerSource, text, options);
     } catch (err) {
         console.log(clc.yellow('[ WARNING ]') + ` banner send fail: ${err.message}`);
-        return ctx.reply(text);
+        return ctx.reply(text, options);
     }
 }
 

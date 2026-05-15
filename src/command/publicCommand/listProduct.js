@@ -60,7 +60,7 @@ const listProduct = async (ctx) => {
         const csLine = buildCSInline(setting?.csLinks);
 
         const lines = [];
-        lines.push(renderWelcomeHeader(displayName, companyName, greeting));
+        lines.push(renderWelcomeHeader(ctx.from, companyName, greeting));
         lines.push('');
         lines.push(renderPanduanBlock());
         lines.push('');
@@ -91,7 +91,7 @@ const listProduct = async (ctx) => {
 
         screenState.setScreen(jid, 'PRODUCT_LIST', {});
 
-        await sendWithBanner(ctx, lines.join('\n'), banner);
+        await sendWithBanner(ctx, lines.join('\n'), banner, { mentions: [ctx.jid] });
 
     } catch (err) {
         console.log(err);

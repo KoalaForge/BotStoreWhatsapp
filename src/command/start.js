@@ -60,11 +60,10 @@ const startCommand = async (ctx) => {
         botUserRepository.upsertWhatsappUser(ctx, jid, user.first_name ?? null).catch(() => {});
 
         // Build message
-        const displayName = user.first_name || user.phone || jid;
         const greeting = buildGreeting();
         const companyName = await getCompanyName(setting, ctx.state?.botId);
 
-        let profileMessage = renderWelcomeHeader(displayName, companyName, greeting) + '\n\n';
+        let profileMessage = renderWelcomeHeader(ctx.from, companyName, greeting) + '\n\n';
         profileMessage += `*Info Pengguna*\n`;
         profileMessage += `> ID: ${ctx.phoneNumber}\n`;
         profileMessage += `> Nama: ${user.first_name || 'N/A'}\n`;
@@ -93,15 +92,16 @@ const startCommand = async (ctx) => {
         }
 
         // Send with banner image or text only
+        const sendOptions = { mentions: [ctx.jid] };
         if (posterUrl) {
             try {
-                await ctx.sendImage(posterUrl, profileMessage);
+                await ctx.sendImage(posterUrl, profileMessage, sendOptions);
             } catch (photoError) {
                 console.log(clc.yellow("[ WARNING ]") + ` Failed to send photo: ${photoError.message}`);
-                await ctx.reply(profileMessage);
+                await ctx.reply(profileMessage, sendOptions);
             }
         } else {
-            await ctx.reply(profileMessage);
+            await ctx.reply(profileMessage, sendOptions);
         }
 
     } catch (err) {

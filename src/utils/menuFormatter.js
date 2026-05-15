@@ -1,25 +1,26 @@
 const { formatMoney } = require('../database/models/money');
 
-function renderWelcomeHeader(displayName, companyName, greeting) {
+function renderWelcomeHeader(phoneNumber, companyName, greeting) {
     return [
-        `Halo ka, @${displayName}! 👋`,
+        `Halo ka, @${phoneNumber}! 👋`,
         `${greeting.text} ${greeting.emoji}`,
         '',
         `Selamat datang di *${companyName}* 🚀`
     ].join('\n');
 }
 
-function renderSectionBlock(title, bodyLines) {
-    const header = `────── [ ${title} ] ──────`;
-    const closing = '───────────────────── ';
-    return [header, ...bodyLines.map(l => `  ${l}`), closing].join('\n');
+function renderSectionBlock(title, bodyLines, opts = {}) {
+    const open = opts.openDivider ?? '──────';
+    const close = opts.closeDivider ?? '───────────────────── ';
+    const header = `${open} [ ${title} ] ${open}`;
+    return [header, ...bodyLines.map(l => `  ${l}`), close].join('\n');
 }
 
 function renderPanduanBlock() {
     return renderSectionBlock('🛒 PANDUAN ORDER', [
         'QRIS  : buy <kode> <jumlah>',
         'Saldo : buynow <kode> <jumlah>'
-    ]);
+    ], { openDivider: '──', closeDivider: '──' });
 }
 
 function renderPintasanBlock() {
