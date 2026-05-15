@@ -1,8 +1,5 @@
 const { formatMoney } = require('../database/models/money');
 
-const MAX_WA_TEXT = 6500;     // text-only message safe limit (vs 65536 hard cap)
-const MAX_WA_CAPTION = 1024;  // image caption hard limit
-
 function renderWelcomeHeader(displayName, companyName, greeting) {
     return [
         `Halo ka, @${displayName}! 👋`,
@@ -52,32 +49,10 @@ function renderVariantCard({ productName, variant, soldCount }) {
     return renderSectionBlock(`${productName} — ${variant.name}`, body);
 }
 
-function chunkMessage(fullText, firstMax = MAX_WA_TEXT, restMax = MAX_WA_TEXT) {
-    if (fullText.length <= firstMax) return [fullText];
-    const lines = fullText.split('\n');
-    const chunks = [];
-    let buf = '';
-    let limit = firstMax;
-    for (const line of lines) {
-        if ((buf + '\n' + line).length > limit && buf) {
-            chunks.push(buf);
-            buf = line;
-            limit = restMax;
-        } else {
-            buf = buf ? `${buf}\n${line}` : line;
-        }
-    }
-    if (buf) chunks.push(buf);
-    return chunks;
-}
-
 module.exports = {
     renderWelcomeHeader,
     renderSectionBlock,
     renderPanduanBlock,
     renderPintasanBlock,
-    renderVariantCard,
-    chunkMessage,
-    MAX_WA_TEXT,
-    MAX_WA_CAPTION
+    renderVariantCard
 };

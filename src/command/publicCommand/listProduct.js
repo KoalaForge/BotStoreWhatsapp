@@ -16,10 +16,7 @@ const {
     renderWelcomeHeader,
     renderPanduanBlock,
     renderPintasanBlock,
-    renderVariantCard,
-    chunkMessage,
-    MAX_WA_TEXT,
-    MAX_WA_CAPTION
+    renderVariantCard
 } = require('../../utils/menuFormatter');
 
 const listProduct = async (ctx) => {
@@ -94,16 +91,7 @@ const listProduct = async (ctx) => {
 
         screenState.setScreen(jid, 'PRODUCT_LIST', {});
 
-        const fullText = lines.join('\n');
-        const firstMax = banner ? MAX_WA_CAPTION : MAX_WA_TEXT;
-        const chunks = chunkMessage(fullText, firstMax, MAX_WA_TEXT);
-        for (let i = 0; i < chunks.length; i++) {
-            if (i === 0) {
-                await sendWithBanner(ctx, chunks[i], banner);
-            } else {
-                await ctx.reply(chunks[i]);
-            }
-        }
+        await sendWithBanner(ctx, lines.join('\n'), banner);
 
     } catch (err) {
         console.log(err);
