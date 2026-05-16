@@ -82,22 +82,10 @@ async function wsRoutes(fastify, options) {
             }
         };
 
-        // Max reconnect failed
-        const onMaxReconnectFailed = () => {
-            if (socket.readyState === 1) {
-                socket.send(JSON.stringify({
-                    type: 'error',
-                    data: { message: 'Connection failed after maximum reconnect attempts' }
-                }));
-                socket.close(4002, 'Max reconnect failed');
-            }
-        };
-
         // Bind events
         connection.on('qr', onQr);
         connection.on('connected', onConnected);
         connection.on('loggedOut', onLoggedOut);
-        connection.on('maxReconnectFailed', onMaxReconnectFailed);
 
         // Auto-close after 3 minutes (QR codes expire)
         const timeout = setTimeout(() => {
@@ -116,7 +104,6 @@ async function wsRoutes(fastify, options) {
             connection.removeListener('qr', onQr);
             connection.removeListener('connected', onConnected);
             connection.removeListener('loggedOut', onLoggedOut);
-            connection.removeListener('maxReconnectFailed', onMaxReconnectFailed);
 
             const clients = clientsByBot.get(botId);
             if (clients) {

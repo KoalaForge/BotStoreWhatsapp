@@ -59,20 +59,9 @@ async function singleWsRoutes(fastify, options) {
             }
         };
 
-        const onMaxReconnectFailed = () => {
-            if (socket.readyState === 1) {
-                socket.send(JSON.stringify({
-                    type: 'error',
-                    data: { message: 'Connection failed after maximum reconnect attempts' }
-                }));
-                socket.close(4002, 'Max reconnect failed');
-            }
-        };
-
         connection.on('qr', onQr);
         connection.on('connected', onConnected);
         connection.on('loggedOut', onLoggedOut);
-        connection.on('maxReconnectFailed', onMaxReconnectFailed);
 
         const timeout = setTimeout(() => {
             if (socket.readyState === 1) {
@@ -89,7 +78,6 @@ async function singleWsRoutes(fastify, options) {
             connection.removeListener('qr', onQr);
             connection.removeListener('connected', onConnected);
             connection.removeListener('loggedOut', onLoggedOut);
-            connection.removeListener('maxReconnectFailed', onMaxReconnectFailed);
             clients.delete(socket);
         });
 

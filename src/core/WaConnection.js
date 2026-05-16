@@ -68,19 +68,38 @@ class WaConnection extends EventEmitter {
         this._saveCreds = null;
         this._clearAuth = null;
         this._reconnectAttempts = 0;
-        this._maxReconnectAttempts = 5;   // Reduced from 10 — less aggressive
+        // 24/7 SaaS: never give up reconnecting. Soft threshold only escalates
+        // log severity + fires `bot_reconnect_warning` webhook so operators
+        // still see prolonged outages. Loop continues until `loggedOut`.
+        this._reconnectWarnAt = 10;
+        this._reconnectWarningEmitted = false;
         this._intentionalClose = false;
         this._presenceInterval = null;
         // Circuit breaker for 408/connectionLost after a successful `open`.
         // Healthy sessions never hit this — 408 takes ~30s of dead keepalive
         // to fire, so 3× in 2 min is structurally impossible without a deeper
-        // problem. When tripped, escalate to the generic exp-backoff path so
-        // we eventually surface `maxReconnectFailed` to the manager instead of
-        // looping silently.
+        // problem. When tripped, escalate to the unbounded backoff path so we
+        // stop hammering with fast retries.
         this._timeoutWindow = [];
         this._timeoutWindowMs = 120_000;
         this._timeoutWindowMax = 3;
         this._lastOpenAt = 0;
+        // getMessage cache (Step 2): in-memory LRU for outgoing ciphertext so
+        // Baileys can satisfy peer retry receipts after socket restart.
+        this._sentMsgCache = new Map();
+        this._sentMsgCacheMax = 2000;
+        // msgRetryCounter (Step 3): hard cap on retry receipts per message
+        // to prevent retry storms desyncing sessions further.
+        this._retryCounterCache = new Map();
+        // Decrypt failure tracker (Step 4-5): jid → { count, firstAt }.
+        // Triggers session purge when threshold hit.
+        this._decryptFailures = new Map();
+        // Watchdog (Step 6): force WS restart if no events received while
+        // state=connected. Updated by every relevant event.
+        this._lastEventAt = 0;
+        this._watchdogInterval = null;
+        // Session purge handle, captured from useMongoAuthState() in start().
+        this._purgePeerSession = null;
         // Pin device identity for the lifetime of this instance — Baileys
         // pairing breaks if the browser fingerprint changes mid-session.
         // Prefer the persisted profile from DB so reconnects/restarts keep
@@ -153,6 +172,143 @@ class WaConnection extends EventEmitter {
     _emit(eventName, data) {
         if (!this._webhookConfig) return;
         sendWebhook(this._webhookConfig, eventName, data);
+    }
+
+    // ── Reconnect scheduler ──────────────────────────────────────────────────
+    // Unbounded retry with capped exp backoff. Only `loggedOut` permanently
+    // stops the bot (handled in connection.update). After `_reconnectWarnAt`
+    // consecutive failures we surface `bot_reconnect_warning` so operators
+    // see prolonged outages without the bot dying.
+    _scheduleReconnect(options, statusCode) {
+        const n = this._reconnectAttempts;
+        const expIdx = Math.min(n, 6);             // cap exp growth at 2^6
+        const base = Math.min(2000 * Math.pow(2, Math.max(0, expIdx - 1)), 120_000);
+        const delay = Math.round(base * (0.7 + Math.random() * 0.6));
+
+        const level = n >= this._reconnectWarnAt ? 'ERROR' : 'WARN';
+        log(level, `Bot ${this.botId} disconnected (code ${statusCode}). Reconnecting in ${delay}ms (attempt ${n})...`);
+
+        if (n >= this._reconnectWarnAt && !this._reconnectWarningEmitted) {
+            this._reconnectWarningEmitted = true;
+            this._emit('bot_reconnect_warning', {
+                attempts: n,
+                status_code: statusCode,
+                threshold: this._reconnectWarnAt
+            });
+        }
+
+        this._setState('reconnecting');
+        setTimeout(() => this._connect(options), delay);
+    }
+
+    // ── Sent-message cache (getMessage support) ──────────────────────────────
+    // Baileys calls getMessage(key) to satisfy peer retry receipts; without a
+    // cache it returns undefined → counter drift → "Bad MAC" / "Failed to
+    // decrypt" on the peer side. LRU-evict by re-inserting on access (Map
+    // preserves insertion order). Memory budget: ~2000 × ~2KB ≈ 4MB/bot.
+    _cacheKey(key) {
+        return `${key.remoteJid}:${key.id}`;
+    }
+    _cacheSent(key, message) {
+        if (!key || !key.id || !key.remoteJid || !message) return;
+        const k = this._cacheKey(key);
+        if (this._sentMsgCache.has(k)) this._sentMsgCache.delete(k);
+        this._sentMsgCache.set(k, message);
+        while (this._sentMsgCache.size > this._sentMsgCacheMax) {
+            const oldest = this._sentMsgCache.keys().next().value;
+            if (oldest === undefined) break;
+            this._sentMsgCache.delete(oldest);
+        }
+    }
+    _getSent(key) {
+        if (!key || !key.id || !key.remoteJid) return undefined;
+        return this._sentMsgCache.get(this._cacheKey(key));
+    }
+
+    // ── Decrypt-failure tracker + auto session purge ─────────────────────────
+    // When a peer accumulates ≥ 3 ciphertext decode failures within 5 min we
+    // delete its session-* docs from Mongo. Next inbound message from that
+    // peer triggers a clean prekey bundle exchange — no re-pair needed.
+    async _recordDecryptFailure(jid, messageId) {
+        if (!jid) return;
+        const now = Date.now();
+        const entry = this._decryptFailures.get(jid) || { count: 0, firstAt: now };
+        // Reset window if last failure was > 5 min ago.
+        if (now - entry.firstAt > 5 * 60_000) {
+            entry.count = 0;
+            entry.firstAt = now;
+        }
+        entry.count += 1;
+        this._decryptFailures.set(jid, entry);
+
+        log('WARN', `Decrypt failure for bot ${this.botId} from ${jid} (count=${entry.count}, msg=${messageId || 'n/a'})`);
+        this._emit('decrypt_error', { from: jid, message_id: messageId || null, count: entry.count });
+
+        // Only purge real DM peers — skip groups, broadcasts, status, lid.
+        const isDm = typeof jid === 'string' && jid.endsWith('@s.whatsapp.net');
+        if (isDm && entry.count >= 3 && this._purgePeerSession) {
+            try {
+                await this._purgePeerSession(jid);
+                this._decryptFailures.delete(jid);
+                log('INFO', `Purged stale session for ${jid} (bot ${this.botId}). Peer prekey bundle will create a fresh session.`);
+                this._emit('session_purged', { jid });
+            } catch (err) {
+                log('ERROR', `Failed to purge session for ${jid} (bot ${this.botId}): ${err.message}`);
+            }
+        }
+    }
+
+    // ── Health watchdog ──────────────────────────────────────────────────────
+    // Forces WS restart if the connection appears alive but receives nothing
+    // for 5 min. Triggers the existing reconnect path (unbounded) — does NOT
+    // clear creds. Also prunes stale entries in the retry / failure caches.
+    _touchEvent() {
+        this._lastEventAt = Date.now();
+    }
+    _startWatchdog() {
+        this._stopWatchdog();
+        this._lastEventAt = Date.now();
+        this._watchdogInterval = setInterval(() => {
+            try {
+                this._pruneCaches();
+                if (this._state !== 'connected') return;
+                const idle = Date.now() - this._lastEventAt;
+                if (idle > 5 * 60_000) {
+                    log('WARN', `Watchdog: bot ${this.botId} idle ${Math.round(idle / 1000)}s while state=connected — forcing WS restart.`);
+                    this._emit('watchdog_restart', { idle_ms: idle });
+                    try {
+                        if (this.sock?.ws?.close) this.sock.ws.close();
+                        else if (typeof this.sock?.end === 'function') this.sock.end(undefined);
+                    } catch (_) { /* best-effort */ }
+                }
+            } catch (_) { /* watchdog must never throw */ }
+        }, 60_000);
+        if (typeof this._watchdogInterval.unref === 'function') {
+            this._watchdogInterval.unref();
+        }
+    }
+    _stopWatchdog() {
+        if (this._watchdogInterval) {
+            clearInterval(this._watchdogInterval);
+            this._watchdogInterval = null;
+        }
+    }
+    _pruneCaches() {
+        // Retry counter entries are tiny but unbounded over time. Cap by size.
+        if (this._retryCounterCache.size > 2000) {
+            const toDrop = this._retryCounterCache.size - 1500;
+            const it = this._retryCounterCache.keys();
+            for (let i = 0; i < toDrop; i++) {
+                const k = it.next().value;
+                if (k === undefined) break;
+                this._retryCounterCache.delete(k);
+            }
+        }
+        // Decay decrypt-failure windows older than 10 min.
+        const cutoff = Date.now() - 10 * 60_000;
+        for (const [jid, entry] of this._decryptFailures) {
+            if (entry.firstAt < cutoff) this._decryptFailures.delete(jid);
+        }
     }
 
     /**
@@ -235,13 +391,15 @@ class WaConnection extends EventEmitter {
      * @returns {Promise<void>}
      */
     async start(options = {}) {
-        const { state, saveCreds, clearAll } = await useMongoAuthState(this.botId);
+        const { state, saveCreds, clearAll, purgePeerSession } = await useMongoAuthState(this.botId);
         this._authState = state;
         this._saveCreds = saveCreds;
         this._clearAuth = clearAll;
+        this._purgePeerSession = purgePeerSession;
 
         this._intentionalClose = false;
         this._reconnectAttempts = 0;
+        this._reconnectWarningEmitted = false;
         this._autoRequestPairing = options.pairingCode === true;
         this._pairingCodeRequested = false;
         this._setState('connecting');
@@ -254,9 +412,12 @@ class WaConnection extends EventEmitter {
     async _connect(options = {}) {
         const baileys = await loadBaileys();
         const makeWASocket = baileys.default || baileys.makeWASocket;
-        const { DisconnectReason, fetchLatestBaileysVersion } = baileys;
-        // Stash for use in connection.update handler below.
+        const { DisconnectReason, fetchLatestBaileysVersion, WAMessageStubType } = baileys;
+        // Stash for use in connection.update / messages.upsert handlers below.
         this._DisconnectReason = DisconnectReason;
+        // CIPHERTEXT stub fires when Baileys gives up decrypting a message.
+        // Numeric fallback (1) handles odd v6→v7 enum-export inconsistencies.
+        const CIPHERTEXT_STUB = WAMessageStubType?.CIPHERTEXT ?? 1;
 
         const { version } = await fetchLatestBaileysVersion();
 
@@ -297,13 +458,28 @@ class WaConnection extends EventEmitter {
             connectTimeoutMs: 60_000,
             defaultQueryTimeoutMs: 60_000,
             retryRequestDelayMs: 2_000,
-            // v7 requires getMessage for retry + poll-vote decrypt. Minimal stub —
-            // returns undefined which signals "no cached message"; baileys handles fallback.
-            getMessage: async (_key) => undefined,
+            // getMessage backed by in-memory LRU cache — lets Baileys answer
+            // peer retry receipts with the original ciphertext after a socket
+            // restart, breaking the "counter drift → Bad MAC" cycle.
+            getMessage: async (key) => this._getSent(key),
+            // Hard cap retry receipts per message at 3 to prevent retry storms
+            // that further desync sessions.
+            msgRetryCounterCache: {
+                get: (k) => this._retryCounterCache.get(k),
+                set: (k, v) => {
+                    if (typeof v === 'number' && v > 3) return;
+                    this._retryCounterCache.set(k, v);
+                }
+            },
+            // Skip status broadcast traffic — never useful, just noise that
+            // burns retry-receipt budget on irrelevant ciphertexts.
+            shouldIgnoreJid: (jid) =>
+                jid === 'status@broadcast' || (typeof jid === 'string' && jid.endsWith('@broadcast')),
         });
 
         // -- Connection update events --
         this.sock.ev.on('connection.update', async (update) => {
+            this._touchEvent();
             const { connection, lastDisconnect, qr } = update;
 
             if (qr && !options.pairingCode) {
@@ -350,8 +526,10 @@ class WaConnection extends EventEmitter {
                 this.isRunning = true;
                 this.startedAt = new Date();
                 this._reconnectAttempts = 0;
+                this._reconnectWarningEmitted = false;
                 this._lastOpenAt = Date.now();
                 this._timeoutWindow = [];
+                this._startWatchdog();
                 log('INFO', `WhatsApp connected: ${this.botId} (${this.phoneNumber})`);
                 this._setState('connected');
                 this.emit('connected');
@@ -412,20 +590,7 @@ class WaConnection extends EventEmitter {
                         log('WARN', `Bot ${this.botId} hit ${this._timeoutWindowMax} timeouts in ${this._timeoutWindowMs / 1000}s after open — escalating to backoff.`);
                         this._timeoutWindow = [];
                         this._reconnectAttempts++;
-                        if (this._reconnectAttempts <= this._maxReconnectAttempts) {
-                            const base = Math.min(2000 * Math.pow(2, this._reconnectAttempts - 1), 120000);
-                            const delay = Math.round(base * (0.7 + Math.random() * 0.6));
-                            log('WARN', `Bot ${this.botId} disconnected (code ${statusCode}). Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})...`);
-                            setTimeout(() => this._connect(options), delay);
-                        } else {
-                            log('ERROR', `Bot ${this.botId} exceeded max reconnect attempts (${this._maxReconnectAttempts}). Giving up.`);
-                            this._setState('failed');
-                            this.emit('maxReconnectFailed');
-                            this._emit('bot_disconnected', {
-                                reason: 'max_reconnect_attempts_exceeded',
-                                status_code: statusCode
-                            });
-                        }
+                        this._scheduleReconnect(options, statusCode);
                         return;
                     }
 
@@ -441,28 +606,14 @@ class WaConnection extends EventEmitter {
 
                 if (statusCode === DR.loggedOut) {
                     log('WARN', `Bot ${this.botId} logged out. Session invalidated. Needs re-pairing.`);
+                    this._stopWatchdog();
                     await this._clearAuth();
                     this._setState('logged_out');
                     this.emit('loggedOut');
                     this._emit('bot_logged_out', { status_code: statusCode });
                 } else if (shouldReconnect && !this._intentionalClose) {
                     this._reconnectAttempts++;
-                    if (this._reconnectAttempts <= this._maxReconnectAttempts) {
-                        // Exponential backoff capped at 2 min, with ±30 % jitter
-                        const base = Math.min(2000 * Math.pow(2, this._reconnectAttempts - 1), 120000);
-                        const delay = Math.round(base * (0.7 + Math.random() * 0.6));
-                        log('WARN', `Bot ${this.botId} disconnected (code ${statusCode}). Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})...`);
-                        this._setState('reconnecting');
-                        setTimeout(() => this._connect(options), delay);
-                    } else {
-                        log('ERROR', `Bot ${this.botId} exceeded max reconnect attempts (${this._maxReconnectAttempts}). Giving up.`);
-                        this._setState('failed');
-                        this.emit('maxReconnectFailed');
-                        this._emit('bot_disconnected', {
-                            reason: 'max_reconnect_attempts_exceeded',
-                            status_code: statusCode
-                        });
-                    }
+                    this._scheduleReconnect(options, statusCode);
                 } else {
                     log('INFO', `Bot ${this.botId} connection closed intentionally.`);
                     this._setState('disconnected');
@@ -472,13 +623,45 @@ class WaConnection extends EventEmitter {
         });
 
         // -- Credential update (save to MongoDB) --
-        this.sock.ev.on('creds.update', this._saveCreds);
+        this.sock.ev.on('creds.update', async () => {
+            this._touchEvent();
+            try { await this._saveCreds(); } catch (err) {
+                log('ERROR', `Failed to save creds for bot ${this.botId}: ${err.message}`);
+            }
+        });
+
+        // -- Outgoing/echoed message updates: refresh getMessage cache so
+        // late-arriving retry receipts still find the ciphertext.
+        this.sock.ev.on('messages.update', (updates) => {
+            this._touchEvent();
+            if (!Array.isArray(updates)) return;
+            for (const u of updates) {
+                if (u?.key?.fromMe && u?.update?.message) {
+                    this._cacheSent(u.key, u.update.message);
+                }
+            }
+        });
 
         // -- Incoming messages --
         this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+            this._touchEvent();
             if (type !== 'notify') return;
 
             for (const msg of messages) {
+                // Cache OUTGOING ciphertext so Baileys can answer peer retry
+                // receipts later. Must run before the `fromMe` skip below.
+                if (msg.key?.fromMe && msg.message) {
+                    this._cacheSent(msg.key, msg.message);
+                }
+
+                // Surface decrypt failures (CIPHERTEXT stub fires when Baileys
+                // gives up on this message). Fires auto session-purge after
+                // threshold — see _recordDecryptFailure.
+                if (msg.messageStubType === CIPHERTEXT_STUB && !msg.key?.fromMe) {
+                    this._recordDecryptFailure(msg.key?.remoteJid, msg.key?.id).catch(() => {});
+                    continue;
+                }
+
                 // Skip if from self
                 if (msg.key.fromMe) continue;
 
@@ -579,6 +762,7 @@ class WaConnection extends EventEmitter {
         try {
             this._intentionalClose = true;
             this._stopPresenceSimulation();
+            this._stopWatchdog();
             if (this.sock) {
                 await this.sock.logout().catch(() => {});
                 this.sock.end(undefined);
@@ -618,6 +802,7 @@ class WaConnection extends EventEmitter {
         try {
             this._intentionalClose = true;
             this._stopPresenceSimulation();
+            this._stopWatchdog();
             if (this.sock) {
                 this.sock.end(undefined);
                 this.sock = null;

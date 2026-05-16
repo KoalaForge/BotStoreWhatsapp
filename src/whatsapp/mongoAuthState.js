@@ -53,6 +53,21 @@ async function useMongoAuthState(botId) {
         await WaAuthState.deleteMany({ botId });
     }
 
+    // Delete all signal session docs for a single peer JID. Used by
+    // WaConnection to auto-repair "Bad MAC" / counter-drift situations:
+    // dropping the local session-{jid}* docs forces a clean prekey bundle
+    // exchange on the next inbound message from that peer. No re-pair needed.
+    async function purgePeerSession(jid) {
+        if (!jid || typeof jid !== 'string') return 0;
+        const safe = jid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const result = await WaAuthState.deleteMany({
+            botId,
+            dataType: 'keys',
+            dataKey: { $regex: `^session-.*${safe}` }
+        });
+        return result?.deletedCount || 0;
+    }
+
     let creds = await readData('creds', 'main');
     if (!creds) {
         creds = initAuthCreds();
@@ -102,7 +117,8 @@ async function useMongoAuthState(botId) {
         saveCreds: async () => {
             await writeData('creds', 'main', state.creds);
         },
-        clearAll
+        clearAll,
+        purgePeerSession
     };
 }
 
