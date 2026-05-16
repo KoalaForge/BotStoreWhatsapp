@@ -253,10 +253,14 @@ async function confirmPayBalance(ctx) {
             await voucherState.clearUserVoucherState(userId);
         }
 
-        // Get SNK content — for reseller, use platform SNK (ownerId=null)
-        const snkQuery = isResellerOrder
-            ? { codeVariant: variant.codeVariant, ownerId: null }
-            : { codeVariant: variant.codeVariant };
+        // Get SNK content — for reseller, use platform SNK (ownerId=null).
+        // For non-reseller, scope to the variant's owner; codeVariant is NOT
+        // unique across tenants, and a lookup without ownerId would return
+        // another tenant's SNK.
+        const snkQuery = {
+            codeVariant: variant.codeVariant,
+            ownerId: isResellerOrder ? null : (variant.ownerId ?? null),
+        };
         const variantSnk = await productVariantSnkModel.findOne(snkQuery);
 
         // Get buyer info for admin notification
