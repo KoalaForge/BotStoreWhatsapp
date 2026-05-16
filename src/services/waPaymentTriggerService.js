@@ -32,14 +32,14 @@ const DELIVERY_STATUS = {
 class WaPaymentTriggerService {
     /**
      * Backfill settlement fields when koalabotbe (Laravel) wrote payment fields
-     * directly to Mongo before invoking the bot trigger API. In that case the
-     * bot's normal markTransactionSuccess path is skipped (idempotency early
-     * return), so settle_expected_at / is_settled stay at schema defaults.
+     * directly to Mongo before invoking the bot trigger API, OR when the
+     * polling loop detects an already-paid transaction (isAlreadyPaid=true)
+     * whose settlement fields were never populated.
      *
      * Idempotent — atomic conditional update; no-op if already populated or
      * not eligible (SINGLE mode, balance/topup, missing paid_at, etc.).
      */
-    async _backfillSettlementIfMissing(transaction) {
+    async backfillSettlementIfMissing(transaction) {
         if (!modeService.isMultiMode()) return;
         if (!transaction.paid_at) return;
         if (transaction.settle_expected_at) return;
@@ -139,7 +139,7 @@ class WaPaymentTriggerService {
         // Backfill settlement fields if Laravel wrote payment fields directly
         // (paid_at present but settle_expected_at/is_settled unset). Must run
         // BEFORE idempotency early-return below.
-        await this._backfillSettlementIfMissing(transaction);
+        await this.backfillSettlementIfMissing(transaction);
 
         // 2. Idempotency: already fully processed
         if (transaction.isSuccess && transaction.isDelivered) {

@@ -7,6 +7,7 @@ const repositoryContext = require('./src/services/repositoryContext');
 
 const qrisService = require('./src/services/qrisService');
 const transactionService = require('./src/services/transactionService');
+const waPaymentTriggerService = require('./src/services/waPaymentTriggerService');
 const gatewayResolverService = require('./src/services/payment/GatewayResolverService');
 const transactionItemsHelper = require('./src/utils/transactionItemsHelper');
 const waMessageFormatter = require('./src/utils/waMessageFormatter');
@@ -132,6 +133,14 @@ async function detectPaymentAndDeliver(sock, context, transaction, statusData) {
     if (!shouldDeliver) return;
 
     const isOwnerTopUp = !modeService.isSingleMode() && (transaction.transaction_type || 'product') === 'topup' && transaction.ownerId === null;
+
+    // Backfill settlement fields when a paid-but-unsettled transaction is
+    // observed (e.g. Laravel wrote isSuccess/paid_at direct to Mongo without
+    // hitting the trigger API). Idempotent — no-op if fields already set or
+    // transaction is not eligible (SINGLE mode, balance, topup, etc.).
+    if (isAlreadyPaid && !isOwnerTopUp) {
+        await waPaymentTriggerService.backfillSettlementIfMissing(transaction);
+    }
 
     // Only mark as success if not already paid (trigger API or webhook already did this)
     if (!isAlreadyPaid) {
