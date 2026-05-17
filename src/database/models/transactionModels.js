@@ -194,6 +194,25 @@ const transactionSchema = new Schema({
         required: false,
         default: null,
         index: true
+    },
+    // Group ack metadata — populated when the transaction was triggered from a
+    // group chat (`.buy` / `.buynow` / `.topup`). Empty for native DM flow.
+    // Used by delivery handlers to post a thank-you ack back to the origin
+    // group, mentioning the user and quoting their trigger message.
+    originGroupJid: {
+        type: String,
+        required: false,
+        default: null,
+    },
+    originSenderJid: {
+        type: String,
+        required: false,
+        default: null,
+    },
+    originMessageId: {
+        type: String,
+        required: false,
+        default: null,
     }
 }, {
     timestamps: true

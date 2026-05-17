@@ -26,7 +26,7 @@
 const crypto = require('crypto');
 const clc    = require('cli-color');
 const moment = require('moment-timezone');
-const { randomInt } = require('../utils/humanDelay');
+const { randomInt, isHumanizeDisabled } = require('../utils/humanDelay');
 
 const DELAY_MIN_MS        = 1500;           // Minimum gap between messages
 const DELAY_MAX_MS        = 4000;           // Maximum gap between messages
@@ -225,6 +225,7 @@ class WaBroadcastQueueService {
     }
 
     _sleep(ms) {
+        if (isHumanizeDisabled()) return Promise.resolve();
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 

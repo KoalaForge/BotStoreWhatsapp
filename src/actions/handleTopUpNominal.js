@@ -22,7 +22,7 @@ async function handleTopUpNominal(ctx) {
             return ctx.reply("Harap selesaikan transaksi sebelumnya.");
         }
 
-        await ctx.reply("Bot sedang membuat QRIS untuk top-up..");
+        await ctx.reply("⏳ Membuat QRIS pembayaran...");
 
         // Generate QRIS for top-up (includes gateway fee calculation)
         const { qrisImage, transactionId, messageText, formattedDate, formattedDateFile, fee, totalAmount, originalAmount, paymentMethodCode, gatewayReference } =
@@ -65,6 +65,9 @@ async function handleTopUpNominal(ctx) {
             isDelivered: false,
             topupAmount: originalAmount,
             gateway_reference: gatewayReference,
+            originGroupJid: ctx.originGroupJid || null,
+            originSenderJid: ctx.originGroupJid ? ctx.jid : null,
+            originMessageId: ctx.originGroupJid ? (ctx.rawMessage?.key?.id || null) : null,
         });
 
     } catch (err) {

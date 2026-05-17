@@ -6,6 +6,7 @@ const botUserBalanceRepository = require('../../repositories/BotUserBalanceRepos
 const settingsService = require('../../services/settingsService');
 const { formatMoney } = require('../../database/models/money');
 const screenState = require('../../state/screenState');
+const groupListCache = require('../../state/groupListCache');
 const { resolveBanner, sendWithBanner } = require('../../utils/bannerResolver');
 const { buildCSInline } = require('./cs');
 const { buildVariantItems } = require('../../utils/variantDisplayHelper');
@@ -91,12 +92,27 @@ const listProduct = async (ctx) => {
             }
         });
 
-        lines.push('_Ketik nomor produk (mis. `1`) untuk lihat semua varian._');
-        lines.push('_Atau pakai pintasan langsung:_ `buy <kode> <jumlah>` _/_ `buynow <kode> <jumlah>`');
+        if (ctx.isGroup) {
+            lines.push('_Reply pesan ini dengan nomor produk untuk lihat varian di DM._');
+            lines.push('_Atau ketik langsung:_ `.buy <kode> <jumlah>` _/_ `.buynow <kode> <jumlah>`');
+        } else {
+            lines.push('_Ketik nomor produk (mis. `1`) untuk lihat semua varian._');
+            lines.push('_Atau pakai pintasan langsung:_ `buy <kode> <jumlah>` _/_ `buynow <kode> <jumlah>`');
+        }
 
         screenState.setScreen(jid, 'PRODUCT_LIST', {});
 
-        await sendWithBanner(ctx, lines.join('\n'), banner, { mentions: [ctx.jid] });
+        const sentMsg = await sendWithBanner(ctx, lines.join('\n'), banner, { mentions: [ctx.jid] });
+
+        // In groups, cache the catalog message's stanzaId so the user can quote-
+        // reply with a number to get variant details delivered to their DM.
+        if (ctx.isGroup && sentMsg?.key?.id) {
+            groupListCache.set(ctx.from, {
+                stanzaId: sentMsg.key.id,
+                groupJid: ctx.chat,
+                productMap: allProducts.map(p => ({ code: p.code, name: p.name }))
+            });
+        }
 
     } catch (err) {
         console.log(err);

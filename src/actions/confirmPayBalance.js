@@ -17,6 +17,7 @@ const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
 const { getMessageText } = require('../utils/messageContext');
 const screenState = require('../state/screenState');
 const { jidQuery } = require('../utils/jidHelper');
+const { sendGroupAck } = require('../utils/groupReply');
 
 /**
  * Centralized function to format balance history description with transaction IDs
@@ -41,6 +42,18 @@ async function confirmPayBalance(ctx) {
         if (pendingTransaction) {
             return ctx.reply("Harap selesaikan transaksi sebelumnya.");
         }
+
+        // Recover group-origin metadata seeded by prepareOrder (if user triggered
+        // this purchase from a group via `.buynow`). Lost from ctx because the
+        // confirm step (`1` in DM) arrives as a fresh native-DM message.
+        const screenEntry = screenState.getScreen(ctx.from);
+        const originGroupJid = ctx.originGroupJid || screenEntry?.originGroupJid || null;
+        const originSenderJid = originGroupJid
+            ? (ctx.originGroupJid ? ctx.jid : screenEntry?.originSenderJid || null)
+            : null;
+        const originMessageId = originGroupJid
+            ? (ctx.originGroupJid ? (ctx.rawMessage?.key?.id || null) : screenEntry?.originMessageId || null)
+            : null;
 
         // Parse order details from session or message
         const messageText = ctx.session?.lastOrderMessage || getMessageText(ctx);
@@ -215,6 +228,9 @@ async function confirmPayBalance(ctx) {
             is_reseller_order: isResellerOrder,
             balance_deducted: !!ownerBalanceDeductResult,
             buyer_notes: buyerNotes || null,
+            originGroupJid,
+            originSenderJid,
+            originMessageId,
             ...settlementFields
         });
 
@@ -333,6 +349,19 @@ async function confirmPayBalance(ctx) {
                 `*Total:* ${formatMoney(totalPrice)}\n` +
                 `*Waktu:* ${formattedDate}`;
             await sendNotification(ctx.sock, adminMsg, ctx).catch(() => {});
+        }
+
+        // Post a thank-you ack into the origin group (if this purchase started
+        // from `.buynow` in a group). Best-effort — group send failures must
+        // not invalidate a delivered purchase.
+        if (originGroupJid) {
+            await sendGroupAck(ctx.sock, {
+                groupJid: originGroupJid,
+                senderJid: originSenderJid,
+                senderPhone: userId,
+                messageId: originMessageId,
+                text: `*Pembelian ${product.name} x${orderAmount} berhasil.* Cek DM untuk detail. Terima kasih.`
+            }).catch(() => {});
         }
 
     } catch (err) {

@@ -31,4 +31,16 @@ function jidQuery(field, id) {
     return { $or: [{ [field]: phone }, { [field]: phone + WA_SUFFIX }] };
 }
 
-module.exports = { stripPhone, toJid, jidQuery };
+/**
+ * Phone-only string for the running bot, derived from the live Baileys socket.
+ * Baileys stores authenticated identity in `sock.user.id` formatted as
+ * "62xxxxxxxxxx:N@s.whatsapp.net" (with a device suffix `:N`). Strip the
+ * suffix to get a clickable wa.me number.
+ */
+function getBotPhone(sock) {
+    const id = sock?.user?.id || '';
+    if (!id) return '';
+    return stripPhone(String(id).split(':')[0]);
+}
+
+module.exports = { stripPhone, toJid, jidQuery, getBotPhone };

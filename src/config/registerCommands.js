@@ -32,7 +32,12 @@ function registerCommands(router) {
     router.command(['stok', 'stock'], command.stock);
     router.command(['voucher', 'vouchers'], command.voucherCommand);
     router.command(['riwayat', 'history'], command.showTransactionHistory);
-    router.command(['listproduk', 'listproduct', 'produk'], command.listProduct);
+    router.command(['listproduk', 'listproduct', 'produk', 'list'], command.listProduct);
+    router.command('topup', command.topupCommand);
+    router.command('buy', command.buyCommand);
+    router.command('buynow', command.buyNowCommand);
+    router.command(['open', 'opengroup', 'openchat'], command.openGroupCommand);
+    router.command(['close', 'closegroup', 'closechat'], command.closeGroupCommand);
 
     // ============================================
     // PRODUCT MANAGEMENT COMMANDS

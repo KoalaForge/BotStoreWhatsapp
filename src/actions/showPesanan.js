@@ -173,7 +173,15 @@ async function prepareOrder(ctx, quantity = 1) {
         variantCode: variantValue,
         productCode: product.code,
         actionMap,
-        orderMessage: data
+        orderMessage: data,
+        // Carry group-origin metadata through the multi-step confirm flow so
+        // confirmPayBalance can ack the origin group after delivery. screenState
+        // merges on setScreen, so subsequent screen transitions preserve these.
+        ...(ctx.originGroupJid ? {
+            originGroupJid: ctx.originGroupJid,
+            originSenderJid: ctx.jid,
+            originMessageId: ctx.rawMessage?.key?.id || null
+        } : {})
     });
 
     // Set session for payment handlers

@@ -42,15 +42,36 @@ class WaCtx {
 
         // Callback data (from button responses)
         this.callbackData = null;
+
+        // Chat/jid override — set by cloneToDM() so group-originated flows can
+        // target the user's DM JID while preserving the original message.
+        this._chatOverride = null;
+        this._originGroupJid = null;
     }
 
     // ==========================================
     // Identity Properties
     // ==========================================
 
-    /** Full JID for sending messages (e.g. "6281234567890@s.whatsapp.net") */
+    /**
+     * Full JID of the sender (for mentions, sendTo).
+     * - DM: same as remoteJid.
+     * - Group: key.participant is the sender JID (preferring participantAlt
+     *   when participant is `@lid`).
+     * - Cloned-to-DM ctx: returns the override DM JID.
+     */
     get jid() {
-        return this._rawMessage.key.remoteJid;
+        if (this._chatOverride) return this._chatOverride;
+        const key = this._rawMessage.key || {};
+        const remote = key.remoteJid || '';
+        if (remote.endsWith('@g.us')) {
+            const part = key.participant || '';
+            if (part.endsWith('@lid') && key.participantAlt) {
+                return String(key.participantAlt);
+            }
+            return part || remote;
+        }
+        return remote;
     }
 
     /**
@@ -62,6 +83,16 @@ class WaCtx {
     get from() {
         const key = this._rawMessage.key || {};
         const remote = key.remoteJid || '';
+
+        // Group: sender is in `participant`. Prefer participantAlt for @lid.
+        if (remote.endsWith('@g.us')) {
+            const part = key.participant || '';
+            if (part.endsWith('@lid') && key.participantAlt) {
+                return String(key.participantAlt).split('@')[0];
+            }
+            return part.split('@')[0];
+        }
+
         if (remote.endsWith('@lid') && key.remoteJidAlt) {
             return String(key.remoteJidAlt).split('@')[0];
         }
@@ -70,7 +101,28 @@ class WaCtx {
 
     /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
+        if (this._chatOverride) return this._chatOverride;
         return this._rawMessage.key.remoteJid;
+    }
+
+    /**
+     * True when the *active chat* is a group. For ctx instances produced by
+     * `cloneToDM()` this is false — even though the original message came from
+     * a group, sends now target the user's DM. Use `originGroupJid` to detect
+     * the "was cloned from group" case.
+     */
+    get isGroup() {
+        if (this._chatOverride) return false;
+        const remote = this._rawMessage?.key?.remoteJid || '';
+        return remote.endsWith('@g.us');
+    }
+
+    /**
+     * Origin group JID when this ctx was cloned from a group message.
+     * Returns null for native DM contexts (and for groups that haven't been cloned).
+     */
+    get originGroupJid() {
+        return this._originGroupJid;
     }
 
     /** Alias for from (phone number without @suffix) */
@@ -325,6 +377,35 @@ class WaCtx {
      */
     async answerCbQuery() {
         // No-op: WhatsApp doesn't have callback query acknowledgement
+    }
+
+    /**
+     * Clone this context so that send methods target the user's DM JID instead
+     * of the current chat. Used by group flows that need to deliver QRIS / order
+     * details privately while the trigger arrived in a group.
+     *
+     * Inherits sock, state, repositoryContext, pricingService, session, match,
+     * callbackData from the original. `from`, `messageKey`, `rawMessage`, and
+     * `messageType` remain the original sender's. `chat` and `jid` resolve to
+     * the user's DM JID.
+     */
+    cloneToDM() {
+        // Resolve the sender's full JID. `this.jid` already handles all cases:
+        // DM (remoteJid), group with @s.whatsapp.net participant, and group with
+        // @lid participant (preferring participantAlt when WhatsApp exposes it).
+        // Using `toJid(this.from)` would strip the @lid suffix and produce a
+        // bogus @s.whatsapp.net JID — Baileys then drops the send silently.
+        const dmJid = this.jid;
+        const clone = new WaCtx(this.sock, this._rawMessage, this._botId);
+        clone.state = this.state;
+        clone.repositoryContext = this.repositoryContext;
+        clone.pricingService = this.pricingService;
+        clone.session = { ...this.session };
+        clone.match = this.match;
+        clone.callbackData = this.callbackData;
+        clone._chatOverride = dmJid;
+        clone._originGroupJid = this.isGroup ? this._rawMessage.key.remoteJid : null;
+        return clone;
     }
 }
 

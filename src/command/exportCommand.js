@@ -5,6 +5,10 @@ const listProduct = require('./publicCommand/listProduct');
 const stock = require('./publicCommand/stock');
 const saldoCommand = require('./publicCommand/saldo');
 const voucherCommand = require('./publicCommand/voucher');
+const topupCommand = require('./publicCommand/topupCommand');
+const buyCommand = require('./publicCommand/buyCommand');
+const buyNowCommand = require('./publicCommand/buyNowCommand');
+const { openGroupCommand, closeGroupCommand } = require('./publicCommand/openCloseGroupCommand');
 const {
     showTransactionHistory,
     showPurchaseHistory,
@@ -155,6 +159,11 @@ module.exports = {
     stock,
     saldoCommand,
     voucherCommand,
+    topupCommand,
+    buyCommand,
+    buyNowCommand,
+    openGroupCommand,
+    closeGroupCommand,
     showTransactionHistory,
     showPurchaseHistory,
     showDepositHistory,

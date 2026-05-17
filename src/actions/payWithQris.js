@@ -85,7 +85,7 @@ async function payWithQris(ctx) {
         const { profit, stockItems } = stockResult;
         claimedStockItems = stockItems;
 
-        await ctx.reply("Bot sedang membuat QRIS..");
+        await ctx.reply("⏳ Membuat QRIS pembayaran...");
 
         // Generate QRIS for product purchase (includes gateway fee calculation)
         const { qrisImage, transactionId, messageText: qrisMessage, formattedDate, formattedDateFile, gatewayFee, finalAmount, paymentMethodCode, gatewayReference } =
@@ -145,7 +145,10 @@ async function payWithQris(ctx) {
             voucherDiscount: voucherDiscount,
             gateway_reference: gatewayReference,
             is_reseller_order: isResellerOrder,
-            buyer_notes: buyerNotes || null
+            buyer_notes: buyerNotes || null,
+            originGroupJid: ctx.originGroupJid || null,
+            originSenderJid: ctx.originGroupJid ? ctx.jid : null,
+            originMessageId: ctx.originGroupJid ? (ctx.rawMessage?.key?.id || null) : null,
         });
 
         // Create transaction items (dual-write for web system compatibility)

@@ -32,6 +32,7 @@ const waProductDeliveryService = require('./waProductDeliveryService');
 const cycleService = require('./cycleService');
 const waMessageFormatter = require('../utils/waMessageFormatter');
 const { sendNotification } = require('../utils/waNotifications');
+const { sendGroupAck } = require('../utils/groupReply');
 
 // ---------------------------------------------------------------------------
 // Balance description helper (inlined to avoid cross-project dependency)
@@ -250,6 +251,18 @@ async function handleTopUpDelivery(sock, context, transaction, paymentTimeString
         { transactionId: transaction.transactionId },
         { $set: { isDelivered: true } }
     );
+
+    // Post thank-you ack into the origin group when this top-up was initiated
+    // from a group. Best-effort — group send must not block delivery.
+    if (transaction.originGroupJid) {
+        await sendGroupAck(sock, {
+            groupJid: transaction.originGroupJid,
+            senderJid: transaction.originSenderJid,
+            senderPhone: transaction.user_id,
+            messageId: transaction.originMessageId,
+            text: `*Top-up ${formatMoney(amountToAdd)} berhasil.* Terima kasih.`
+        }).catch(() => {});
+    }
 }
 
 /**
@@ -383,6 +396,18 @@ async function handleProductDelivery(sock, context, transaction, paymentTimeStri
     if (transaction.is_reseller_order && platformRecord) {
         const paidAt = transaction.paidAt || new Date();
         await cycleService.setCycleEligibilityForPlatformItems(platformRecord._id, paidAt);
+    }
+
+    // Post thank-you ack into the origin group when this purchase was initiated
+    // from a group via `.buy <code>`. Best-effort.
+    if (transaction.originGroupJid) {
+        await sendGroupAck(sock, {
+            groupJid: transaction.originGroupJid,
+            senderJid: transaction.originSenderJid,
+            senderPhone: transaction.user_id,
+            messageId: transaction.originMessageId,
+            text: `*Pembelian ${getProduct.name} x${transaction.orderQuantity} berhasil.* Cek DM untuk detail. Terima kasih.`
+        }).catch(() => {});
     }
 }
 

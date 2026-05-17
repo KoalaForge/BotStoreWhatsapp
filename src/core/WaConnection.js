@@ -6,6 +6,7 @@ const { useMongoAuthState } = require('../whatsapp/mongoAuthState');
 const { loadBaileys } = require('../whatsapp/baileysLoader');
 const { EventEmitter } = require('events');
 const { sendWebhook } = require('../services/webhookNotificationService');
+const groupGreetingService = require('../services/groupGreetingService');
 const { humanDelay, jitteredDelay, randomInt } = require('../utils/humanDelay');
 const qrcode = require('qrcode');
 
@@ -665,9 +666,6 @@ class WaConnection extends EventEmitter {
                 // Skip if from self
                 if (msg.key.fromMe) continue;
 
-                // Skip group messages (DM only)
-                if (msg.key.remoteJid.endsWith('@g.us')) continue;
-
                 // Skip status/broadcast
                 if (msg.key.remoteJid === 'status@broadcast') continue;
 
@@ -697,6 +695,15 @@ class WaConnection extends EventEmitter {
                 } catch (err) {
                     log('ERROR', `Error handling message for bot ${this.botId}: ${err.message}`);
                 }
+            }
+        });
+
+        // -- Group participant join/leave (welcome / goodbye) --
+        this.sock.ev.on('group-participants.update', async (update) => {
+            try {
+                await groupGreetingService.handleParticipantUpdate(this.sock, update);
+            } catch (err) {
+                log('ERROR', `[group-participants] bot ${this.botId}: ${err.message}`);
             }
         });
 

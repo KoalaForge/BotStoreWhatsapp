@@ -26,6 +26,8 @@ function registerHandlers(router) {
 
     router.use(async (ctx, next) => {
         if (ctx.isCallback) return next();
+        // State-based interceptors are DM-only — groups don't have multi-step input.
+        if (ctx.isGroup) return next();
 
         const text = ctx.message?.trim();
         if (!text) return next();
@@ -74,6 +76,9 @@ function registerHandlers(router) {
 
     router.use(async (ctx, next) => {
         if (ctx.isCallback) return next();
+        // Global keywords, number-routing, and text shortcuts are DM-only.
+        // Groups go through `.buy` / `.buynow` / `.topup` dot commands instead.
+        if (ctx.isGroup) return next();
 
         const text = ctx.message?.trim();
         if (!text) return next();

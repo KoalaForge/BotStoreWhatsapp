@@ -168,11 +168,8 @@ async function runSingleMode() {
         );
     });
 
-    // SINGLE mode connection is API-driven — do NOT auto-start here.
-    // Caller hits POST /api/bots/create (fresh pairing) or
-    // POST /api/bots/:id/reactivate (existing creds) to bring the socket up.
-    // Mark ready immediately so /ready returns 200; pairing state is reflected
-    // via /api/bots/:id and /ws/qr/:botId.
+    // Mark ready immediately so /ready returns 200; pairing/connection state
+    // is reflected via /api/bots/:id and /ws/qr/:botId.
     shutdownState.setReady();
 
     // Start API server — exposes pairing endpoints (QR WebSocket + pairing
@@ -181,11 +178,51 @@ async function runSingleMode() {
     const apiPort = parseInt(process.env.API_PORT || '3000');
     const apiServer = await startServer(null, apiPort, { singleConnection: connection });
 
-    console.log(
-        clc.yellow.bold("[ INFO ]") +
-        ` [${moment().format('HH:mm:ss')}]:` +
-        clc.blueBright(' Connection idle. POST /api/bots/create to start pairing or /api/bots/single/reactivate if creds exist.')
-    );
+    // Auto-resume: if a previous pairing wrote auth creds, reconnect on boot.
+    // Mirrors POST /api/bots/single/reactivate so the bot survives PM2/Docker
+    // restarts without manual API calls. Skip when SINGLE_AUTO_RECONNECT=false
+    // or when no creds exist (fresh install → wait for POST /api/bots/create).
+    const autoReconnectEnabled = (process.env.SINGLE_AUTO_RECONNECT ?? 'true').toLowerCase() !== 'false';
+    let autoStarted = false;
+    if (autoReconnectEnabled) {
+        try {
+            const WaAuthState = require('./src/database/models/waAuthStateModel');
+            const credsDoc = await WaAuthState.findOne({
+                botId: 'single',
+                dataType: 'creds',
+                dataKey: 'main'
+            }).lean();
+            if (credsDoc && singleBotDoc?.isActive !== false) {
+                connection.start().catch((err) => {
+                    console.error(
+                        clc.red.bold("[ ERROR ]") +
+                        ` [${moment().format('HH:mm:ss')}]:` +
+                        clc.red(` Auto-reconnect failed: ${err.message}`)
+                    );
+                });
+                autoStarted = true;
+                console.log(
+                    clc.green.bold("[ INFO ]") +
+                    ` [${moment().format('HH:mm:ss')}]:` +
+                    clc.blueBright(' Auto-reconnecting using stored credentials...')
+                );
+            }
+        } catch (err) {
+            console.error(
+                clc.yellow.bold("[ WARN ]") +
+                ` [${moment().format('HH:mm:ss')}]:` +
+                clc.yellow(` Auto-reconnect probe failed: ${err.message}`)
+            );
+        }
+    }
+
+    if (!autoStarted) {
+        console.log(
+            clc.yellow.bold("[ INFO ]") +
+            ` [${moment().format('HH:mm:ss')}]:` +
+            clc.blueBright(' Connection idle. POST /api/bots/create to start pairing or /api/bots/single/reactivate if creds exist.')
+        );
+    }
 
     // Start transaction processing interval
     const ProcessingTransaction = require('./ProcessTransaction');
