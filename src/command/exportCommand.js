@@ -9,6 +9,8 @@ const topupCommand = require('./publicCommand/topupCommand');
 const buyCommand = require('./publicCommand/buyCommand');
 const buyNowCommand = require('./publicCommand/buyNowCommand');
 const { openGroupCommand, closeGroupCommand } = require('./publicCommand/openCloseGroupCommand');
+const kickCommand = require('./publicCommand/kickCommand');
+const { tagAllCommand, hideTagCommand } = require('./publicCommand/tagAllCommand');
 const {
     showTransactionHistory,
     showPurchaseHistory,
@@ -164,6 +166,9 @@ module.exports = {
     buyNowCommand,
     openGroupCommand,
     closeGroupCommand,
+    kickCommand,
+    tagAllCommand,
+    hideTagCommand,
     showTransactionHistory,
     showPurchaseHistory,
     showDepositHistory,

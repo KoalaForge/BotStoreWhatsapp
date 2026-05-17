@@ -38,6 +38,9 @@ function registerCommands(router) {
     router.command('buynow', command.buyNowCommand);
     router.command(['open', 'opengroup', 'openchat'], command.openGroupCommand);
     router.command(['close', 'closegroup', 'closechat'], command.closeGroupCommand);
+    router.command('kick', command.kickCommand);
+    router.command(['tagall', 'tag'], command.tagAllCommand);
+    router.command(['hidetag', 'htag'], command.hideTagCommand);
 
     // ============================================
     // PRODUCT MANAGEMENT COMMANDS

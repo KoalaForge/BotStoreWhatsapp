@@ -2,7 +2,14 @@
 
 const clc = require('cli-color');
 const moment = require('moment-timezone');
-const { botIdentities, participantIdentities } = require('../utils/groupParticipant');
+const {
+    botIdentities,
+    participantIdentities,
+    pickMentionJid,
+    mentionPhone,
+    stripDevice,
+    phoneOf,
+} = require('../utils/groupParticipant');
 
 function log(level, msg) {
     const colors = { INFO: clc.green.bold, WARN: clc.yellow.bold, ERROR: clc.red.bold };
@@ -10,15 +17,27 @@ function log(level, msg) {
     console.log(`${prefix} [${moment().format('HH:mm:ss')}]: ${clc.blueBright(`[GroupGreeting] ${msg}`)}`);
 }
 
-function extractPhone(jid) {
-    return String(jid).split('@')[0].split(':')[0];
-}
-
 function matchesBot(rawJid, botBundle) {
     const pBundle = participantIdentities({ id: rawJid });
     for (const id of pBundle.ids) if (botBundle.ids.has(id)) return true;
     for (const ph of pBundle.phones) if (botBundle.phones.has(ph)) return true;
     return false;
+}
+
+function bundleHasJid(bundle, jid) {
+    const stripped = stripDevice(jid);
+    if (!stripped) return false;
+    if (bundle.ids.has(stripped)) return true;
+    const ph = phoneOf(jid);
+    return !!ph && bundle.phones.has(ph);
+}
+
+function findParticipantByJid(meta, jid) {
+    if (!meta?.participants?.length || !jid) return null;
+    for (const p of meta.participants) {
+        if (bundleHasJid(participantIdentities(p), jid)) return p;
+    }
+    return null;
 }
 
 const buildWelcome = (mention, groupName) =>
@@ -54,12 +73,15 @@ async function handleParticipantUpdate(sock, update) {
     for (const pJid of participants) {
         if (matchesBot(pJid, botBundle)) continue;
 
-        const mention = `@${extractPhone(pJid)}`;
+        const pEntry    = findParticipantByJid(meta, pJid) || { id: pJid };
+        const mentionJid = pickMentionJid(pEntry);
+        const phone      = mentionPhone(pEntry);
+        const mention    = `@${phone}`;
         const text = action === 'add'
             ? buildWelcome(mention, groupName)
             : buildGoodbye(mention, groupName);
 
-        await sock.sendMessage(groupJid, { text, mentions: [pJid] }).catch((err) => {
+        await sock.sendMessage(groupJid, { text, mentions: [mentionJid] }).catch((err) => {
             log('WARN', `send ${action} failed for ${pJid} in ${groupJid}: ${err.message}`);
         });
     }

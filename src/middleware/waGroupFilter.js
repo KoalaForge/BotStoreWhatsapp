@@ -13,7 +13,10 @@ const GROUP_ALLOWED_COMMANDS = new Set([
     'buy',
     'buynow',
     'open', 'opengroup', 'openchat',
-    'close', 'closegroup', 'closechat'
+    'close', 'closegroup', 'closechat',
+    'kick',
+    'tagall', 'tag',
+    'hidetag', 'htag'
 ]);
 
 /**

@@ -125,6 +125,27 @@ function summarizeMeta(meta, maxEntries = 8) {
     return `mode=${meta.addressingMode || 'unknown'} total=${total} admins=[${admins.join(', ')}]`;
 }
 
+/**
+ * Preferred mention JID for a participant.
+ * Phone form (@s.whatsapp.net) is preferred so receivers' WhatsApp clients
+ * can resolve the chip against their contact book / pushName cache.
+ * Falls back to id (may be @lid) then lid.
+ */
+function pickMentionJid(p) {
+    if (!p) return '';
+    return p.jid || p.id || p.lid || '';
+}
+
+/**
+ * Digits to use in the body `@<digits>` token. MUST come from the same JID
+ * we put in the mentions[] array, otherwise WhatsApp will not bind the chip
+ * and the token renders as raw text.
+ */
+function mentionPhone(p) {
+    const j = pickMentionJid(p);
+    return j.split('@')[0].split(':')[0];
+}
+
 module.exports = {
     stripDevice,
     phoneOf,
@@ -135,4 +156,6 @@ module.exports = {
     isParticipantAdmin,
     findParticipant,
     summarizeMeta,
+    pickMentionJid,
+    mentionPhone,
 };
