@@ -12,6 +12,7 @@ const GROUP_ALLOWED_COMMANDS = new Set([
     'topup',
     'buy',
     'buynow',
+    'caraorder', 'cara-order',
     'open', 'opengroup', 'openchat',
     'close', 'closegroup', 'closechat',
     'kick',

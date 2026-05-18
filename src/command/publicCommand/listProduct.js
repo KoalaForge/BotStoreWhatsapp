@@ -65,7 +65,7 @@ const listProduct = async (ctx) => {
         const lines = [];
         lines.push(renderWelcomeHeader(ctx.from, companyName, greeting));
         lines.push('');
-        lines.push(renderPanduanBlock());
+        lines.push(renderPanduanBlock(ctx.isGroup));
         lines.push('');
         lines.push(`💎 *Saldo* : ${formatMoney(balance)}`);
         if (csLine) {
@@ -73,7 +73,7 @@ const listProduct = async (ctx) => {
             lines.push(`🛟 *CS*    : ${csContent}`);
         }
         lines.push('');
-        lines.push(renderPintasanBlock());
+        lines.push(renderPintasanBlock(ctx.isGroup));
         lines.push('');
 
         allProducts.forEach((product, i) => {

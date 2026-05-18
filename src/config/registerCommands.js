@@ -28,6 +28,7 @@ function registerCommands(router) {
     // ============================================
     router.start(command.startCommand);
     router.command('help', command.helpCommand);
+    router.command(['caraorder', 'cara-order'], command.helpCommand);
     router.command(['saldo', 'balance'], command.saldoCommand);
     router.command(['stok', 'stock'], command.stock);
     router.command(['voucher', 'vouchers'], command.voucherCommand);

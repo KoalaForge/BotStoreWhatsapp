@@ -16,21 +16,34 @@ function renderSectionBlock(title, bodyLines, opts = {}) {
     return [header, ...bodyLines.map(l => `  ${l}`), close].join('\n');
 }
 
-function renderPanduanBlock() {
-    return renderSectionBlock('🛒 PANDUAN ORDER', [
-        'QRIS  : buy <kode> <jumlah>',
-        'Saldo : buynow <kode> <jumlah>'
-    ], { openDivider: '──', closeDivider: '──' });
+function renderPanduanBlock(isGroup = false) {
+    const lines = isGroup
+        ? [
+            'QRIS  : .buy <kode> <jumlah>',
+            'Saldo : .buynow <kode> <jumlah>'
+        ]
+        : [
+            'QRIS  : buy <kode> <jumlah>',
+            'Saldo : buynow <kode> <jumlah>'
+        ];
+    return renderSectionBlock('🛒 PANDUAN ORDER', lines, { openDivider: '──', closeDivider: '──' });
 }
 
-function renderPintasanBlock() {
-    return renderSectionBlock('⚡ PINTASAN', [
-        '.stok       : Lihat stok lengkap',
-        '.saldo      : Cek & top-up saldo',
-        '.vouchers   : Lihat voucher',
-        'riwayat     : Riwayat transaksi',
-        'cara order  : Panduan lengkap'
-    ]);
+function renderPintasanBlock(isGroup = false) {
+    const lines = isGroup
+        ? [
+            '.stok       : Lihat stok lengkap',
+            '.saldo      : Cek & top-up saldo',
+            '.caraorder  : Panduan lengkap'
+        ]
+        : [
+            '.stok       : Lihat stok lengkap',
+            '.saldo      : Cek & top-up saldo',
+            '.vouchers   : Lihat voucher',
+            'riwayat     : Riwayat transaksi',
+            'cara order  : Panduan lengkap'
+        ];
+    return renderSectionBlock('⚡ PINTASAN', lines);
 }
 
 function renderVariantCard({ productIndex, productName, variant, soldCount }) {

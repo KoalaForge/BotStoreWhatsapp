@@ -33,22 +33,33 @@ const saldoCommand = async (ctx) => {
         const settings = await settingsService.getSettings(ctx);
         const companyName = await getCompanyName(settings, ctx.state?.botId);
 
-        const text = [
-            `*Saldo — ${companyName}*`,
-            '',
-            `*Saldo:* ${formatMoney(userBalance.balance)}`,
-            '',
-            '*Top-up — ketik salah satu:*',
-            '· `topup 10000` — Rp 10.000',
-            '· `topup 25000` — Rp 25.000',
-            '· `topup 50000` — Rp 50.000',
-            '· `topup 100000` — Rp 100.000',
-            '· `topup <nominal>` — Custom (min. 5.000)',
-            '',
-            'Ketik *kembali* untuk batal.'
-        ].join('\n');
+        const text = ctx.isGroup
+            ? [
+                `*Saldo — ${companyName}*`,
+                '',
+                `*Saldo:* ${formatMoney(userBalance.balance)}`,
+                '',
+                '*Top-up:* ketik `.topup <nominal>` (min. 5.000)',
+                '_Contoh:_ `.topup 50000`'
+            ].join('\n')
+            : [
+                `*Saldo — ${companyName}*`,
+                '',
+                `*Saldo:* ${formatMoney(userBalance.balance)}`,
+                '',
+                '*Top-up — ketik salah satu:*',
+                '· `topup 10000` — Rp 10.000',
+                '· `topup 25000` — Rp 25.000',
+                '· `topup 50000` — Rp 50.000',
+                '· `topup 100000` — Rp 100.000',
+                '· `topup <nominal>` — Custom (min. 5.000)',
+                '',
+                'Ketik *kembali* untuk batal.'
+            ].join('\n');
 
-        screenState.setScreen(jid, 'SALDO_TOPUP');
+        if (!ctx.isGroup) {
+            screenState.setScreen(jid, 'SALDO_TOPUP');
+        }
 
         await ctx.reply(text);
 
