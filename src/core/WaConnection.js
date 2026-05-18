@@ -8,6 +8,12 @@ const { EventEmitter } = require('events');
 const { sendWebhook } = require('../services/webhookNotificationService');
 const groupGreetingService = require('../services/groupGreetingService');
 const { humanDelay, jitteredDelay, randomInt } = require('../utils/humanDelay');
+const {
+    getCachedGroupMetadata,
+    setCachedGroupMetadata,
+    invalidateGroupMetadata,
+    invalidateAllForSock,
+} = require('../utils/groupMetadataCache');
 const qrcode = require('qrcode');
 
 // Events that are too large or too sensitive to forward via the raw passthrough.
@@ -444,6 +450,19 @@ class WaConnection extends EventEmitter {
             this.sock = null;
         }
 
+        // Resolve group allowlist once per socket build. When set, Baileys
+        // ignores groups outside the list — protects the event loop from
+        // chatter in large public groups where the bot has no business.
+        const groupAllowlist = (process.env.WA_GROUP_ALLOWLIST || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+        const groupAllowSet = new Set(groupAllowlist);
+
+        // Forward-declare socket reference so cachedGroupMetadata can resolve
+        // it via closure (this.sock is reassigned by makeWASocket below).
+        let socketRef = null;
+
         this.sock = makeWASocket({
             version,
             auth: this._authState,
@@ -463,6 +482,12 @@ class WaConnection extends EventEmitter {
             // peer retry receipts with the original ciphertext after a socket
             // restart, breaking the "counter drift → Bad MAC" cycle.
             getMessage: async (key) => this._getSent(key),
+            // Cached group metadata — Baileys calls this during decryption /
+            // sender-key resolution; without a cache it round-trips to the
+            // server and parses a 100KB+ payload for every group message in
+            // large groups. Repeated parse blocks the event loop and starves
+            // keepalive (→ code 408 disconnects).
+            cachedGroupMetadata: async (jid) => getCachedGroupMetadata(socketRef, jid),
             // Hard cap retry receipts per message at 3 to prevent retry storms
             // that further desync sessions.
             msgRetryCounterCache: {
@@ -474,9 +499,16 @@ class WaConnection extends EventEmitter {
             },
             // Skip status broadcast traffic — never useful, just noise that
             // burns retry-receipt budget on irrelevant ciphertexts.
-            shouldIgnoreJid: (jid) =>
-                jid === 'status@broadcast' || (typeof jid === 'string' && jid.endsWith('@broadcast')),
+            // When WA_GROUP_ALLOWLIST is set, also ignore groups outside it.
+            shouldIgnoreJid: (jid) => {
+                if (jid === 'status@broadcast') return true;
+                if (typeof jid !== 'string') return false;
+                if (jid.endsWith('@broadcast')) return true;
+                if (groupAllowSet.size > 0 && jid.endsWith('@g.us') && !groupAllowSet.has(jid)) return true;
+                return false;
+            },
         });
+        socketRef = this.sock;
 
         // -- Connection update events --
         this.sock.ev.on('connection.update', async (update) => {
@@ -710,11 +742,34 @@ class WaConnection extends EventEmitter {
         });
 
         // -- Group participant join/leave (welcome / goodbye) --
+        // groupGreetingService.handleParticipantUpdate invalidates the cache
+        // internally before fetching fresh meta. Keep that as the single
+        // invalidation point so we don't double-fetch.
         this.sock.ev.on('group-participants.update', async (update) => {
             try {
                 await groupGreetingService.handleParticipantUpdate(this.sock, update);
             } catch (err) {
                 log('ERROR', `[group-participants] bot ${this.botId}: ${err.message}`);
+            }
+        });
+
+        // -- Group metadata cache invalidation --
+        // groups.update fires when subject/desc/settings change. Drop the
+        // cache entry so the next reader sees the new state.
+        this.sock.ev.on('groups.update', (updates) => {
+            if (!Array.isArray(updates)) return;
+            for (const u of updates) {
+                if (u?.id) invalidateGroupMetadata(this.sock, u.id);
+            }
+        });
+
+        // groups.upsert delivers full metadata payloads for groups the user
+        // has just joined or fetched. Seed the cache so the first command
+        // doesn't pay a cold-fetch round-trip.
+        this.sock.ev.on('groups.upsert', (metas) => {
+            if (!Array.isArray(metas)) return;
+            for (const m of metas) {
+                if (m?.id) setCachedGroupMetadata(this.sock, m.id, m);
             }
         });
 

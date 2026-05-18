@@ -11,6 +11,7 @@ const {
     pickMentionJid,
     mentionPhone,
 } = require('../../utils/groupParticipant');
+const { groupMetadataCached, invalidateGroupMetadata } = require('../../utils/groupMetadataCache');
 
 const USAGE =
     '*Format Kick*\n\n' +
@@ -60,7 +61,7 @@ async function kickCommand(ctx) {
         return ctx.reply('Command ini hanya bisa digunakan di grup.');
     }
 
-    const meta = await ctx.sock.groupMetadata(ctx.chat).catch((err) => {
+    const meta = await groupMetadataCached(ctx.sock, ctx.chat).catch((err) => {
         dlog('meta', `fetch failed: ${err?.message}`);
         return null;
     });
@@ -107,6 +108,7 @@ async function kickCommand(ctx) {
 
     try {
         await ctx.sock.groupParticipantsUpdate(ctx.chat, [targetEntry.id], 'remove');
+        invalidateGroupMetadata(ctx.sock, ctx.chat);
     } catch (err) {
         dlog('kick-call', `failed: ${err?.message}`);
         return ctx.reply(`Gagal kick: ${err.message}`);

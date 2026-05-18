@@ -10,6 +10,7 @@ const {
     stripDevice,
     phoneOf,
 } = require('../utils/groupParticipant');
+const { groupMetadataCached, invalidateGroupMetadata } = require('../utils/groupMetadataCache');
 
 function log(level, msg) {
     const colors = { INFO: clc.green.bold, WARN: clc.yellow.bold, ERROR: clc.red.bold };
@@ -67,7 +68,10 @@ async function handleParticipantUpdate(sock, update) {
     if (!groupJid || !Array.isArray(participants) || participants.length === 0) return;
 
     const botBundle = botIdentities(sock);
-    const meta = await sock.groupMetadata(groupJid).catch(() => null);
+    // Participant changed — drop stale cache so next read sees the new
+    // membership. Then fetch fresh meta (will repopulate the cache).
+    invalidateGroupMetadata(sock, groupJid);
+    const meta = await groupMetadataCached(sock, groupJid).catch(() => null);
     const groupName = meta?.subject || 'grup ini';
 
     for (const pJid of participants) {

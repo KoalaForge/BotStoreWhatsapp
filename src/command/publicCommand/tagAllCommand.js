@@ -8,6 +8,7 @@ const {
     pickMentionJid,
     mentionPhone,
 } = require('../../utils/groupParticipant');
+const { groupMetadataCached } = require('../../utils/groupMetadataCache');
 
 const MAX_MENTIONS = 1024;
 
@@ -35,7 +36,7 @@ async function commonGate(ctx) {
         return null;
     }
 
-    const meta = await ctx.sock.groupMetadata(ctx.chat).catch(() => null);
+    const meta = await groupMetadataCached(ctx.sock, ctx.chat).catch(() => null);
     if (!meta) {
         await ctx.reply('Gagal ambil info grup. Coba lagi.');
         return null;

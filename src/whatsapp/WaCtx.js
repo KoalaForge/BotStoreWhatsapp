@@ -211,8 +211,12 @@ class WaCtx {
 
         if (isHumanizeDisabled()) return;
 
-        // Fire-and-forget typing indicator — don't block the reply on presence roundtrips
-        this.sendTyping().catch(() => {});
+        // Fire-and-forget typing indicator — don't block the reply on presence roundtrips.
+        // Skip for groups: presence broadcasts to every participant, so a typing
+        // ping in a 1000-member group is 1000× more traffic with no UX benefit.
+        if (!this.isGroup) {
+            this.sendTyping().catch(() => {});
+        }
 
         if (charCount > 0) {
             await typingDelay(charCount);

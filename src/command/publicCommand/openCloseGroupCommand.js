@@ -8,6 +8,7 @@ const {
     isParticipantAdmin,
     summarizeMeta,
 } = require('../../utils/groupParticipant');
+const { groupMetadataCached, invalidateGroupMetadata } = require('../../utils/groupMetadataCache');
 
 const TZ = 'Asia/Jakarta';
 const OPEN_TEXT  = '*Kita sudah OPEN ya* silahkan ketik `.list` untuk melihat daftar menu yang tersedia 🔥';
@@ -26,7 +27,7 @@ async function setGroupAnnouncement(ctx, mode, statusText) {
         return ctx.reply('Command ini hanya bisa digunakan di grup.');
     }
 
-    const meta = await ctx.sock.groupMetadata(ctx.chat).catch((err) => {
+    const meta = await groupMetadataCached(ctx.sock, ctx.chat).catch((err) => {
         dlog('meta', `fetch failed: ${err?.message}`);
         return null;
     });
@@ -57,6 +58,7 @@ async function setGroupAnnouncement(ctx, mode, statusText) {
 
     try {
         await ctx.sock.groupSettingUpdate(ctx.chat, mode);
+        invalidateGroupMetadata(ctx.sock, ctx.chat);
     } catch (err) {
         return ctx.reply(`Gagal ubah pengaturan grup: ${err.message}`);
     }

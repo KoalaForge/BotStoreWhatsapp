@@ -18,6 +18,25 @@ const { humanDelay } = require('./src/utils/humanDelay');
 console.clear();
 console.log(clc.blue(figlet.textSync("KOALA WA!")));
 
+// Handler in-flight counter — visibility for backpressure under group load.
+// Spikes above the threshold log a warning so an operator can spot event-loop
+// saturation (which causes WS keepalive misses → code 408).
+let _inflight = 0;
+const _INFLIGHT_WARN_THRESHOLD = parseInt(process.env.WA_INFLIGHT_WARN || '50', 10);
+let _lastInflightWarnAt = 0;
+const _inflightIncr = () => {
+    _inflight++;
+    if (_inflight > _INFLIGHT_WARN_THRESHOLD && Date.now() - _lastInflightWarnAt > 10_000) {
+        _lastInflightWarnAt = Date.now();
+        console.log(
+            clc.yellow.bold("[ WARN ]") +
+            ` [${moment().format('HH:mm:ss')}]:` +
+            clc.yellow(` Handler in-flight high: ${_inflight}`)
+        );
+    }
+};
+const _inflightDecr = () => { if (_inflight > 0) _inflight--; };
+
 // Validate database connection requirement
 if (!process.env.DATABASE_MONGODB_URI) {
     console.error(clc.red.bold("[ ERROR ]") + " DATABASE_MONGODB_URI is required in environment variables");
@@ -80,6 +99,17 @@ async function runSingleMode() {
     // Message handler: wraps incoming messages in WaCtx and routes them
     const handleMessage = async (sock, msg, botId) => {
         const ctx = new WaCtx(sock, msg, botId);
+
+        // Early filter: in groups, only pay handler cost for dot-commands or
+        // numeric quote-replies (catalog picker). Drops chatter from large
+        // groups before humanDelay/markRead saturate the event loop and
+        // cause WS keepalive misses (408 timeouts).
+        if (ctx.isGroup) {
+            const text = (ctx.message || '').trim();
+            if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
+        }
+
+        _inflightIncr();
         try {
             // Humanize: random delay before reading (humans don't read instantly)
             await humanDelay(400, 1500);
@@ -94,6 +124,8 @@ async function runSingleMode() {
                 ` [${moment().format('HH:mm:ss')}]:` +
                 clc.red(` Handler error: ${err.message}`)
             );
+        } finally {
+            _inflightDecr();
         }
     };
 
@@ -321,6 +353,17 @@ async function runMultiMode() {
         }
 
         const ctx = new WaCtx(sock, msg, botId);
+
+        // Early filter: in groups, only pay handler cost for dot-commands or
+        // numeric quote-replies (catalog picker). Drops chatter from large
+        // groups before humanDelay/markRead saturate the event loop and
+        // cause WS keepalive misses (408 timeouts).
+        if (ctx.isGroup) {
+            const text = (ctx.message || '').trim();
+            if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
+        }
+
+        _inflightIncr();
         try {
             // Humanize: random delay before reading (humans don't read instantly)
             await humanDelay(400, 1500);
@@ -335,6 +378,8 @@ async function runMultiMode() {
                 ` [${moment().format('HH:mm:ss')}]:` +
                 clc.red(` Handler error (bot ${botId}): ${err.message}`)
             );
+        } finally {
+            _inflightDecr();
         }
     });
 
