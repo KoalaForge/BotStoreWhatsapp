@@ -556,6 +556,17 @@ class WaConnection extends EventEmitter {
 
             if (connection === 'close') {
                 this.isRunning = false;
+                // Null the sock ref + detach listeners + end() immediately so
+                // external consumers (tx processor, broadcast controller,
+                // in-flight handlers) can't operate on the dead WS during the
+                // reconnect wait. Mirrors _connect()'s old-sock cleanup so the
+                // server-side device slot is released right away.
+                const deadSock = this.sock;
+                this.sock = null;
+                if (deadSock) {
+                    try { deadSock.ev?.removeAllListeners?.(); } catch (_) { /* best-effort */ }
+                    try { deadSock.end?.(undefined); } catch (_) { /* best-effort */ }
+                }
                 const statusCode = (lastDisconnect?.error instanceof Boom)
                     ? lastDisconnect.error.output.statusCode
                     : lastDisconnect?.error?.output?.statusCode || 500;

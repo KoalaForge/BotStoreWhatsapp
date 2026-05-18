@@ -227,14 +227,26 @@ async function runSingleMode() {
     // Start transaction processing interval
     const ProcessingTransaction = require('./ProcessTransaction');
     let txProcessing = false;
+    const TX_TIMEOUT_MS = 15_000;
     const txIntervalId = setInterval(async () => {
-        if (!txProcessing && connection.sock) {
-            txProcessing = true;
-            try {
-                await ProcessingTransaction(connection.sock);
-            } catch (err) {
-                console.error(clc.red.bold("[ ERROR ]") + ` [${moment().format('HH:mm:ss')}]: TX processing error: ${err.message}`);
-            }
+        if (txProcessing) return;
+        // Skip when connection is half-open, dying, or reconnecting — calling
+        // sock methods on a non-running sock triggers EPIPE / Connection Closed
+        // and can provoke server-side 408 by sending on an unregistered WS.
+        // Mirrors WaTransactionProcessor.process() multi-mode filter.
+        if (!connection.isRunning || !connection.sock) return;
+        txProcessing = true;
+        try {
+            await Promise.race([
+                ProcessingTransaction(connection.sock),
+                new Promise((_, reject) => setTimeout(
+                    () => reject(new Error('Timeout: single tx processor')),
+                    TX_TIMEOUT_MS
+                ))
+            ]);
+        } catch (err) {
+            console.error(clc.red.bold("[ ERROR ]") + ` [${moment().format('HH:mm:ss')}]: TX processing error: ${err.message}`);
+        } finally {
             txProcessing = false;
         }
     }, 3_000);
