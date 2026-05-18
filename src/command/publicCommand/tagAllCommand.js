@@ -35,7 +35,7 @@ async function commonGate(ctx) {
         return null;
     }
 
-    const meta = await ctx.sock.getGroupMetadata(ctx.chat).catch(() => null);
+    const meta = await ctx.sock.groupMetadata(ctx.chat).catch(() => null);
     if (!meta) {
         await ctx.reply('Gagal ambil info grup. Coba lagi.');
         return null;

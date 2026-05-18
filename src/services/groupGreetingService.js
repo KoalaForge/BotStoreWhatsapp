@@ -67,7 +67,7 @@ async function handleParticipantUpdate(sock, update) {
     if (!groupJid || !Array.isArray(participants) || participants.length === 0) return;
 
     const botBundle = botIdentities(sock);
-    const meta = await sock.getGroupMetadata(groupJid).catch(() => null);
+    const meta = await sock.groupMetadata(groupJid).catch(() => null);
     const groupName = meta?.subject || 'grup ini';
 
     for (const pJid of participants) {

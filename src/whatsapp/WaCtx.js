@@ -211,12 +211,8 @@ class WaCtx {
 
         if (isHumanizeDisabled()) return;
 
-        // Fire-and-forget typing indicator — don't block the reply on presence roundtrips.
-        // Skip in groups: presence ops cost 2 WS nodes per reply chunk and add no
-        // UX value for bot output (humanize delay still runs below).
-        if (!this.isGroup) {
-            this.sendTyping().catch(() => {});
-        }
+        // Fire-and-forget typing indicator — don't block the reply on presence roundtrips
+        this.sendTyping().catch(() => {});
 
         if (charCount > 0) {
             await typingDelay(charCount);
@@ -355,9 +351,6 @@ class WaCtx {
      * @returns {Promise<void>}
      */
     async markRead() {
-        // Skip group receipts — bots don't benefit from the "seen" signal and
-        // each receipt costs a WS node multiplied across active group traffic.
-        if (this.isGroup) return;
         await this.sock.readMessages([this.messageKey]);
     }
 

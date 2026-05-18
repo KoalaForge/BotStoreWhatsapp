@@ -81,15 +81,6 @@ async function runSingleMode() {
     const handleMessage = async (sock, msg, botId) => {
         const ctx = new WaCtx(sock, msg, botId);
         try {
-            // Group fast-path: drop chitchat BEFORE humanDelay + markRead so
-            // bulk batches from large groups don't burn WS bandwidth on
-            // receipts the bot will never reply to. Mirrors waGroupFilter
-            // drop conditions (src/middleware/waGroupFilter.js:70).
-            if (ctx.isGroup) {
-                const text = (ctx.message || '').trim();
-                if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
-            }
-
             // Humanize: random delay before reading (humans don't read instantly)
             await humanDelay(400, 1500);
             await ctx.markRead();
@@ -331,15 +322,6 @@ async function runMultiMode() {
 
         const ctx = new WaCtx(sock, msg, botId);
         try {
-            // Group fast-path: drop chitchat BEFORE humanDelay + markRead so
-            // bulk batches from large groups don't burn WS bandwidth on
-            // receipts the bot will never reply to. Mirrors waGroupFilter
-            // drop conditions (src/middleware/waGroupFilter.js:70).
-            if (ctx.isGroup) {
-                const text = (ctx.message || '').trim();
-                if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
-            }
-
             // Humanize: random delay before reading (humans don't read instantly)
             await humanDelay(400, 1500);
             await ctx.markRead();

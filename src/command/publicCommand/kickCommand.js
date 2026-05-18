@@ -60,7 +60,7 @@ async function kickCommand(ctx) {
         return ctx.reply('Command ini hanya bisa digunakan di grup.');
     }
 
-    const meta = await ctx.sock.getGroupMetadata(ctx.chat).catch((err) => {
+    const meta = await ctx.sock.groupMetadata(ctx.chat).catch((err) => {
         dlog('meta', `fetch failed: ${err?.message}`);
         return null;
     });
