@@ -42,7 +42,14 @@ async function useMongoAuthState(botId) {
     const authRoot = process.env.WA_AUTH_DIR || path.join(process.cwd(), 'data', 'auth');
     const botDir = path.join(authRoot, sanitizeSegment(botId || 'unknown'));
     const keysDir = path.join(botDir, 'keys');
-    fs.mkdirSync(keysDir, { recursive: true });
+    try {
+        fs.mkdirSync(keysDir, { recursive: true });
+    } catch (err) {
+        const hint = err.code === 'EACCES'
+            ? ` — set WA_AUTH_DIR to a writable path (e.g. /tmp/wa-auth) or chown the parent dir to the runtime user. In Docker, mount a named volume at /app/data/auth and rebuild so the Dockerfile's chown step runs.`
+            : '';
+        throw new Error(`[WA Auth] Cannot create keys dir '${keysDir}': ${err.message}${hint}`);
+    }
 
     function sanitizeSegment(s) {
         return String(s).replace(/[/\\:]/g, '_');

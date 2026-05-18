@@ -43,6 +43,14 @@ COPY --from=build /app/node_modules ./node_modules
 # Copy application source
 COPY . .
 
+# Pre-create writable auth dir owned by node user. Hybrid auth state
+# (src/whatsapp/mongoAuthState.js) persists session-* / sender-key-*
+# libsignal keys to filesystem under ${WA_AUTH_DIR:-/app/data/auth}/<botId>/
+# for sub-ms writes (avoiding the Mongo+AES bottleneck that 408'd 1k-member
+# group sends). docker-compose should mount a named volume here so sessions
+# survive container restarts.
+RUN mkdir -p /app/data/auth && chown -R node:node /app/data
+
 # Run as non-root
 USER node
 

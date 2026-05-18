@@ -164,8 +164,13 @@ main() {
     docker image prune -af --filter "until=168h" 2>&1 | tail -1
     log_info "Pruning build cache (>7 days)..."
     docker builder prune -af --filter "until=168h" 2>&1 | tail -1
-    log_info "Pruning dangling volumes..."
-    docker volume ls -qf dangling=true | xargs -r docker volume rm 2>&1 | tail -1 || true
+    # Volume prune REMOVED. Named volumes (wa-saas-auth, wa-master-auth)
+    # hold hybrid-auth filesystem keys — losing them logs the bot out and
+    # forces a full re-pair. Dangling-volume prune is race-prone during
+    # rolling deploys: between `compose stop` and `up -d` the volume can
+    # appear unattached. If you need to reclaim volume disk, run manually:
+    #   docker volume ls -qf dangling=true
+    # and prune by name after confirming none are auth volumes.
 
     echo ""
     log_step "=== Deploy Summary ==="
