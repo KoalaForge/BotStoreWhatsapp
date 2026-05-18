@@ -14,6 +14,7 @@ const {
     setCachedGroupMetadata,
     invalidateGroupMetadata,
     invalidateAllForSock,
+    dropCacheForBot: dropGroupMetaCache,
 } = require('../utils/groupMetadataCache');
 const qrcode = require('qrcode');
 
@@ -111,6 +112,13 @@ class WaConnection extends EventEmitter {
         // Throttle decrypt-failure logs per peer so a single desynced peer in
         // a busy group can't flood the console after a 408 reconnect.
         this._decryptLogLast = new Map();
+        // Circuit breaker per-peer: when purge fails to fix the desync (some
+        // libsignal states recreate the broken ratchet — community Issue
+        // #2234), this silences both log + purge churn for 5 min so the bot
+        // stays responsive. peerJid → silence_until_ts.
+        this._decryptCircuit = new Map();
+        this._decryptCircuitThreshold = 10;
+        this._decryptCircuitSilenceMs = 5 * 60_000;
         // Per-WaConnection user-device + media caches. Persist across
         // reconnects so USync queries (1000-member groups → 1000 device
         // lookups per send) don't refetch on every transient WS drop.
@@ -265,6 +273,15 @@ class WaConnection extends EventEmitter {
             ? participant
             : jid;
 
+        // Circuit-breaker: if purge keeps failing for this peer, stop logging
+        // + stop attempting purges. Lets Baileys internal retry handle it and
+        // keeps the bot responsive instead of burning CPU on a hopeless peer.
+        const silenceUntil = this._decryptCircuit.get(peerJid);
+        if (silenceUntil && Date.now() < silenceUntil) return;
+        if (silenceUntil && Date.now() >= silenceUntil) {
+            this._decryptCircuit.delete(peerJid);
+        }
+
         const now = Date.now();
         const entry = this._decryptFailures.get(peerJid) || { count: 0, firstAt: now };
         // Reset window if last failure was > 5 min ago.
@@ -283,6 +300,14 @@ class WaConnection extends EventEmitter {
             log('WARN', `Decrypt failure for bot ${this.botId} from ${peerJid} (count=${entry.count}, msg=${messageId || 'n/a'})`);
         }
         this._emit('decrypt_error', { from: peerJid, message_id: messageId || null, count: entry.count });
+
+        // Trip the circuit when failures pile up — purge isn't fixing it.
+        if (entry.count >= this._decryptCircuitThreshold) {
+            this._decryptCircuit.set(peerJid, now + this._decryptCircuitSilenceMs);
+            log('WARN', `Decrypt circuit-breaker tripped for ${peerJid} (bot ${this.botId}). Silencing ${Math.round(this._decryptCircuitSilenceMs / 60_000)}min.`);
+            this._emit('decrypt_circuit_tripped', { jid: peerJid, count: entry.count });
+            return;
+        }
 
         // Purge real peer sessions (DM peers — `@s.whatsapp.net`). Includes
         // group participants resolved above.
@@ -350,6 +375,27 @@ class WaConnection extends EventEmitter {
         const cutoff = Date.now() - 10 * 60_000;
         for (const [jid, entry] of this._decryptFailures) {
             if (entry.firstAt < cutoff) this._decryptFailures.delete(jid);
+        }
+    }
+
+    /**
+     * Prewarm group metadata cache via a single bulk query. Returns true on
+     * success, false on guard failure or error (caller may retry).
+     */
+    async _prewarmGroupCache() {
+        if (!this.sock || !this.isRunning) return false;
+        if (this.sock.ws?.readyState !== 1) return false;
+        try {
+            const allMeta = await this.sock.groupFetchAllParticipating();
+            const count = Object.keys(allMeta || {}).length;
+            for (const [jid, meta] of Object.entries(allMeta || {})) {
+                setCachedGroupMetadata(this.sock, jid, meta);
+            }
+            log('INFO', `Prewarmed group metadata cache: ${count} group(s) for ${this.botId}`);
+            return true;
+        } catch (err) {
+            log('WARN', `Group metadata prewarm failed for ${this.botId}: ${err?.message} — fallback to lazy`);
+            return false;
         }
     }
 
@@ -454,7 +500,7 @@ class WaConnection extends EventEmitter {
     async _connect(options = {}) {
         const baileys = await loadBaileys();
         const makeWASocket = baileys.default || baileys.makeWASocket;
-        const { DisconnectReason, fetchLatestBaileysVersion, WAMessageStubType } = baileys;
+        const { DisconnectReason, fetchLatestBaileysVersion, WAMessageStubType, makeCacheableSignalKeyStore } = baileys;
         // Stash for use in connection.update / messages.upsert handlers below.
         this._DisconnectReason = DisconnectReason;
         // CIPHERTEXT stub fires when Baileys gives up decrypting a message.
@@ -498,9 +544,19 @@ class WaConnection extends EventEmitter {
         // it via closure (this.sock is reassigned by makeWASocket below).
         let socketRef = null;
 
+        // Wrap signal key store with in-memory LRU. Without this, every
+        // decrypt + every encrypt round-trips to Mongo to fetch session keys
+        // — easily 5-20ms per op, blocks the event loop, and starves keepalive
+        // → 408. The wrapper is the canonical Baileys recommendation; auth
+        // state persistence stays in mongoAuthState (the wrapper writes
+        // through).
+        const cachedAuth = makeCacheableSignalKeyStore
+            ? { creds: this._authState.creds, keys: makeCacheableSignalKeyStore(this._authState.keys, logger) }
+            : this._authState;
+
         this.sock = makeWASocket({
             version,
-            auth: this._authState,
+            auth: cachedAuth,
             logger,
             browser: this._browserProfile,
             generateHighQualityLinkPreview: false,
@@ -562,6 +618,10 @@ class WaConnection extends EventEmitter {
             },
         });
         socketRef = this.sock;
+        // Tag the sock so cache helpers (groupMetadataCache, groupAdminIndex)
+        // can resolve botId without callers threading it through. Cache keys
+        // by botId so they survive sock recreation on reconnect.
+        this.sock._botId = this.botId;
 
         // -- Connection update events --
         this.sock.ev.on('connection.update', async (update) => {
@@ -615,6 +675,11 @@ class WaConnection extends EventEmitter {
                 this._reconnectWarningEmitted = false;
                 this._lastOpenAt = Date.now();
                 this._timeoutWindow = [];
+                // Tag sock open timestamp so _sendWithRetry can apply a short
+                // grace period — sending in the first ~2s after open often
+                // hits 428 "Connection Closed" while the server-side device
+                // slot finishes settling.
+                if (this.sock) this.sock._openedAt = Date.now();
                 this._startWatchdog();
                 log('INFO', `WhatsApp connected: ${this.botId} (${this.phoneNumber})`);
                 this._setState('connected');
@@ -637,6 +702,27 @@ class WaConnection extends EventEmitter {
 
                 // Start periodic presence simulation (human online/offline pattern)
                 this._startPresenceSimulation();
+
+                // Prewarm group metadata cache for every group the bot is in.
+                // Without this, the first send to any group after (re)connect
+                // falls through to a fresh server fetch — and on a freshly
+                // reconnected socket that fetch often returns 428 "Connection
+                // Closed" because the server-side device slot is still
+                // settling. One groupFetchAllParticipating() seeds the cache
+                // for ALL groups in a single query.
+                //
+                // 3s settle delay + 1 retry at 5s + readyState guard mirrors
+                // the mitigation pattern from Baileys community issues #1407
+                // and #1976. If both attempts fail, the lazy prewarm path
+                // (index.js incoming-msg hook) still warms the cache before
+                // the reply send.
+                const triggerPrewarm = (delay) => setTimeout(async () => {
+                    const ok = await this._prewarmGroupCache();
+                    if (!ok && delay === 3_000) {
+                        setTimeout(() => this._prewarmGroupCache(), 5_000);
+                    }
+                }, delay);
+                triggerPrewarm(3_000);
             }
 
             if (connection === 'close') {
@@ -705,6 +791,9 @@ class WaConnection extends EventEmitter {
                     log('WARN', `Bot ${this.botId} logged out. Session invalidated. Needs re-pairing.`);
                     this._stopWatchdog();
                     await this._clearAuth();
+                    // Group metadata + derived index live by botId across
+                    // reconnects — only drop when the bot identity is gone.
+                    dropGroupMetaCache(this.botId);
                     this._setState('logged_out');
                     this.emit('loggedOut');
                     this._emit('bot_logged_out', { status_code: statusCode });

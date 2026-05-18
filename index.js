@@ -13,6 +13,7 @@ const connectDatabase = require('./src/database/connect');
 const modeService = require('./src/services/modeService');
 const WaCtx = require('./src/whatsapp/WaCtx');
 const { humanDelay } = require('./src/utils/humanDelay');
+const { groupMetadataCached } = require('./src/utils/groupMetadataCache');
 
 // Display startup banner
 console.clear();
@@ -107,6 +108,10 @@ async function runSingleMode() {
         if (ctx.isGroup) {
             const text = (ctx.message || '').trim();
             if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
+            // Lazy prewarm: kick metadata fetch off the critical path so the
+            // eventual reply send hits the cache. Cheap when warm (sync map
+            // read); fire-and-forget when cold.
+            groupMetadataCached(sock, ctx.chat).catch(() => {});
         }
 
         _inflightIncr();
@@ -379,6 +384,10 @@ async function runMultiMode() {
         if (ctx.isGroup) {
             const text = (ctx.message || '').trim();
             if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
+            // Lazy prewarm: kick metadata fetch off the critical path so the
+            // eventual reply send hits the cache. Cheap when warm (sync map
+            // read); fire-and-forget when cold.
+            groupMetadataCached(sock, ctx.chat).catch(() => {});
         }
 
         _inflightIncr();

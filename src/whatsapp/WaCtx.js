@@ -211,6 +211,15 @@ class WaCtx {
             if (!this.sock || (ws && ws.readyState !== 1)) {
                 await new Promise(r => setTimeout(r, 1500));
             }
+            // Settle grace: server-side device slot finishes registering
+            // ~2s after `connection: 'open'`. Sending earlier hits 428
+            // "Connection Closed" mid-flight. WaConnection stamps
+            // `sock._openedAt` on every open — sleep the remainder.
+            const openedAt = this.sock?._openedAt;
+            if (openedAt && Date.now() - openedAt < 2000) {
+                const wait = 2000 - (Date.now() - openedAt);
+                if (wait > 0) await new Promise(r => setTimeout(r, wait));
+            }
             try {
                 return await this.sock.sendMessage(jid, content, options);
             } catch (err) {

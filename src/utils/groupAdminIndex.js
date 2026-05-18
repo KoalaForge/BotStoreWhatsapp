@@ -32,8 +32,8 @@ const {
     botIdentities,
 } = require('./groupParticipant');
 
-/** @type {WeakMap<object, Map<string, GroupIndex>>} */
-const _indexes = new WeakMap();
+/** @type {Map<string, Map<string, GroupIndex>>} */
+const _indexes = new Map();
 
 /**
  * @typedef {Object} GroupIndex
@@ -46,11 +46,16 @@ const _indexes = new WeakMap();
  * @property {number} ts
  */
 
+function _botIdFor(sock) {
+    return (sock && sock._botId) || 'single';
+}
+
 function _getStore(sock) {
-    let store = _indexes.get(sock);
+    const botId = _botIdFor(sock);
+    let store = _indexes.get(botId);
     if (!store) {
         store = new Map();
-        _indexes.set(sock, store);
+        _indexes.set(botId, store);
     }
     return store;
 }
@@ -157,13 +162,18 @@ function isAdminInIndex(index, bundle) {
 
 function invalidateGroupIndex(sock, jid) {
     if (!jid) return;
-    const store = _indexes.get(sock);
+    const store = _indexes.get(_botIdFor(sock));
     if (store) store.delete(jid);
 }
 
 function invalidateAllForSock(sock) {
-    const store = _indexes.get(sock);
+    const store = _indexes.get(_botIdFor(sock));
     if (store) store.clear();
+}
+
+function dropCacheForBot(botId) {
+    if (!botId) return;
+    _indexes.delete(botId);
 }
 
 module.exports = {
@@ -172,4 +182,5 @@ module.exports = {
     isAdminInIndex,
     invalidateGroupIndex,
     invalidateAllForSock,
+    dropCacheForBot,
 };
