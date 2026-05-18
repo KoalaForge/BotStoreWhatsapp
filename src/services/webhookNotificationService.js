@@ -117,6 +117,12 @@ const sendWebhook = (config, eventName, data) => {
     if (!config || !config.url) return;
     if (!eventMatches(eventName, config.events)) return;
 
+    // Hot path: construct envelope only. JSON.stringify + HMAC + Mongo log
+    // insert all deferred to the background queue. This is called from
+    // WaConnection._emit on every inbound message; in a 1k-member group
+    // those msg/sec adds up to seconds of event-loop CPU work that
+    // starved WS keepalive → 428 mid-USync. Moving JSON+HMAC inside the
+    // queue worker keeps the hot path at ~microseconds per call.
     const envelope = {
         id: `evt_${Date.now()}_${randomSuffix()}`,
         event: eventName,
@@ -126,55 +132,52 @@ const sendWebhook = (config, eventName, data) => {
         data
     };
 
-    let body;
-    try {
-        body = JSON.stringify(envelope, replacer);
-    } catch (err) {
-        console.log(
-            clc.yellow.bold('[ WEBHOOK ]') +
-            ` Failed to serialize ${eventName} for bot ${config.botId}: ${err.message}`
-        );
-        return;
-    }
-
-    const signature = config.secret
-        ? 'sha256=' + crypto.createHmac('sha256', config.secret).update(body).digest('hex')
-        : null;
-
-    const url = config.url;
-    const botId = config.botId;
-
-    // Persist log + enqueue delivery. Never let this block the caller.
-    queueDelivery(botId, envelope, body, signature, url, eventName).catch(err => {
+    queueDelivery(config.botId, envelope, config.secret, config.url, eventName).catch(err => {
         console.log(
             clc.red.bold('[ WEBHOOK ]') +
-            ` Queue error for bot ${botId} event ${eventName}: ${err.message}`
+            ` Queue error for bot ${config.botId} event ${eventName}: ${err.message}`
         );
     });
 };
 
-async function queueDelivery(botId, envelope, body, signature, url, eventName) {
-    let logDoc;
-    try {
-        logDoc = await webhookDeliveryLogModel.create({
-            envelope_id: envelope.id,
-            bot_id: botId,
-            event: eventName,
-            url,
-            payload: envelope,
-            status: 'pending',
-            attempts: 0
-        });
-    } catch (err) {
-        // If we can't even write the log, still try delivery without audit.
-        console.log(
-            clc.yellow.bold('[ WEBHOOK ]') +
-            ` Failed to persist log for ${eventName}: ${err.message}`
-        );
-    }
-
+async function queueDelivery(botId, envelope, secret, url, eventName) {
     const queue = getQueue(botId);
-    queue.add(() => deliverWithRetry(url, body, signature, logDoc?._id, eventName));
+    queue.add(async () => {
+        // JSON.stringify + HMAC happen here, off the event loop's hot path.
+        let body;
+        try {
+            body = JSON.stringify(envelope, replacer);
+        } catch (err) {
+            console.log(
+                clc.yellow.bold('[ WEBHOOK ]') +
+                ` Failed to serialize ${eventName} for bot ${botId}: ${err.message}`
+            );
+            return;
+        }
+        const signature = secret
+            ? 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex')
+            : null;
+
+        let logDoc;
+        try {
+            logDoc = await webhookDeliveryLogModel.create({
+                envelope_id: envelope.id,
+                bot_id: botId,
+                event: eventName,
+                url,
+                payload: envelope,
+                status: 'pending',
+                attempts: 0
+            });
+        } catch (err) {
+            console.log(
+                clc.yellow.bold('[ WEBHOOK ]') +
+                ` Failed to persist log for ${eventName}: ${err.message}`
+            );
+        }
+
+        return deliverWithRetry(url, body, signature, logDoc?._id, eventName);
+    });
 }
 
 async function deliverWithRetry(url, body, signature, logId, eventName) {

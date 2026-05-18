@@ -286,12 +286,16 @@ class WaCtx {
 
         if (isHumanizeDisabled()) return;
 
-        // Fire-and-forget typing indicator — don't block the reply on presence roundtrips.
-        // Skip for groups: presence broadcasts to every participant, so a typing
-        // ping in a 1000-member group is 1000× more traffic with no UX benefit.
-        if (!this.isGroup) {
-            this.sendTyping().catch(() => {});
-        }
+        // Skip humanization entirely in groups. typingDelay/humanDelay
+        // adds 100-600ms blocking await per reply on the event loop —
+        // imperceptible UX cost in a busy 1k-member group but multiplies
+        // event-loop CPU pressure during the libsignal encrypt + USync
+        // window that causes 428 mid-send. DM keeps the human feel.
+        if (this.isGroup) return;
+
+        // Fire-and-forget typing indicator for DM — don't block the reply
+        // on presence roundtrips.
+        this.sendTyping().catch(() => {});
 
         if (charCount > 0) {
             await typingDelay(charCount);

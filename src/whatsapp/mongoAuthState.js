@@ -1,25 +1,83 @@
+const fs = require('fs');
+const fsp = require('fs').promises;
+const path = require('path');
 const { loadBaileys } = require('./baileysLoader');
 const WaAuthState = require('../database/models/waAuthStateModel');
 const { EncryptionService } = require('./authEncryption');
 const clc = require('cli-color');
 
 /**
- * Creates a Baileys-compatible auth state backed by MongoDB.
- * Each bot has its own isolated auth data identified by botId.
- * All data is encrypted at rest using AES-256-GCM.
+ * Hybrid auth state for Baileys.
  *
- * v7 NOTE: auth-state schema gained `lid-mapping`, `device-list`, `tctoken`
- * key categories. They flow through the same dynamic `keys.set/get` API and
- * persist via the existing `keys-{type}-{id}` document layout — no schema change.
+ * Ephemeral libsignal keys (session-*, sender-key-*, sender-key-memory-*)
+ * persist to the local filesystem under `${WA_AUTH_DIR}/<botId>/keys/` as
+ * unencrypted JSON files. This avoids the per-write AES-256-GCM cost and
+ * Mongo round-trip that was saturating the event loop during 1k-member
+ * group sends and starving WS keepalive → 428 mid-USync.
+ *
+ * Durable keys (creds, pre-key, signed-pre-key, app-state-sync-key,
+ * app-state-sync-version, lid-mapping, device-list, tctoken) stay in
+ * MongoDB encrypted at rest — they're identity-critical and small in
+ * volume, so the bulkWrite cost is negligible.
+ *
+ * Existing bots' Mongo session-* docs orphan harmlessly. Libsignal sees
+ * an empty session, peer's next message triggers prekey re-exchange via
+ * the existing `_recordDecryptFailure` path. No migration needed.
  *
  * @param {string} botId - Unique identifier for this bot instance
- * @returns {Promise<{ state: AuthenticationState, saveCreds: () => Promise<void> }>}
+ * @returns {Promise<{ state: AuthenticationState, saveCreds: () => Promise<void>, clearAll: Function, purgePeerSession: Function }>}
  */
 async function useMongoAuthState(botId) {
     const baileys = await loadBaileys();
     const { proto, initAuthCreds } = baileys;
 
     const encryption = EncryptionService.getInstance();
+
+    const EPHEMERAL_CATEGORIES = new Set([
+        'session',
+        'sender-key',
+        'sender-key-memory',
+    ]);
+
+    const authRoot = process.env.WA_AUTH_DIR || path.join(process.cwd(), 'data', 'auth');
+    const botDir = path.join(authRoot, sanitizeSegment(botId || 'unknown'));
+    const keysDir = path.join(botDir, 'keys');
+    fs.mkdirSync(keysDir, { recursive: true });
+
+    function sanitizeSegment(s) {
+        return String(s).replace(/[/\\:]/g, '_');
+    }
+
+    function fsKeyPath(category, id) {
+        return path.join(keysDir, `${category}-${sanitizeSegment(id)}.json`);
+    }
+
+    async function fsReadKey(category, id) {
+        try {
+            const raw = await fsp.readFile(fsKeyPath(category, id), 'utf8');
+            return JSON.parse(raw, BufferJSON.reviver);
+        } catch (err) {
+            if (err.code === 'ENOENT') return null;
+            console.error(clc.red(`[WA Auth] fs read ${category}/${id} failed for bot ${botId}:`), err.message);
+            return null;
+        }
+    }
+
+    async function fsWriteKey(category, id, value) {
+        const file = fsKeyPath(category, id);
+        const serialized = JSON.stringify(value, BufferJSON.replacer);
+        await fsp.writeFile(file, serialized).catch((err) => {
+            console.error(clc.red(`[WA Auth] fs write ${category}/${id} failed for bot ${botId}:`), err.message);
+        });
+    }
+
+    async function fsDeleteKey(category, id) {
+        await fsp.unlink(fsKeyPath(category, id)).catch((err) => {
+            if (err.code !== 'ENOENT') {
+                console.error(clc.red(`[WA Auth] fs unlink ${category}/${id} failed for bot ${botId}:`), err.message);
+            }
+        });
+    }
 
     async function writeData(dataType, dataKey, data) {
         const serialized = JSON.stringify(data, BufferJSON.replacer);
@@ -45,27 +103,45 @@ async function useMongoAuthState(botId) {
         }
     }
 
-    async function removeData(dataType, dataKey) {
-        await WaAuthState.deleteOne({ botId, dataType, dataKey });
-    }
-
     async function clearAll() {
         await WaAuthState.deleteMany({ botId });
+        await fsp.rm(botDir, { recursive: true, force: true }).catch(() => {});
     }
 
-    // Delete all signal session docs for a single peer JID. Used by
+    // Delete local filesystem session-* files matching a peer JID. Used by
     // WaConnection to auto-repair "Bad MAC" / counter-drift situations:
-    // dropping the local session-{jid}* docs forces a clean prekey bundle
-    // exchange on the next inbound message from that peer. No re-pair needed.
+    // dropping the local session-{jid}* files forces a clean prekey bundle
+    // exchange on the next inbound message from that peer. Also cleans any
+    // legacy Mongo session-* docs from pre-hybrid bots.
     async function purgePeerSession(jid) {
         if (!jid || typeof jid !== 'string') return 0;
-        const safe = jid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const result = await WaAuthState.deleteMany({
-            botId,
-            dataType: 'keys',
-            dataKey: { $regex: `^session-.*${safe}` }
-        });
-        return result?.deletedCount || 0;
+        const sanitized = sanitizeSegment(jid);
+        let deleted = 0;
+        try {
+            const entries = await fsp.readdir(keysDir);
+            for (const name of entries) {
+                if (name.startsWith('session-') && name.includes(sanitized)) {
+                    await fsp.unlink(path.join(keysDir, name)).catch(() => {});
+                    deleted += 1;
+                }
+            }
+        } catch (err) {
+            if (err.code !== 'ENOENT') {
+                console.error(clc.red(`[WA Auth] purgePeerSession fs scan failed for bot ${botId}:`), err.message);
+            }
+        }
+        // Legacy Mongo cleanup — back-compat for bots that had session-* docs
+        // before hybrid auth landed. Safe to ignore failures.
+        try {
+            const safe = jid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const result = await WaAuthState.deleteMany({
+                botId,
+                dataType: 'keys',
+                dataKey: { $regex: `^session-.*${safe}` }
+            });
+            deleted += result?.deletedCount || 0;
+        } catch (_) { /* best-effort */ }
+        return deleted;
     }
 
     let creds = await readData('creds', 'main');
@@ -79,12 +155,16 @@ async function useMongoAuthState(botId) {
         keys: {
             get: async (type, ids) => {
                 const data = {};
+                const isEphemeral = EPHEMERAL_CATEGORIES.has(type);
                 await Promise.all(
                     ids.map(async (id) => {
-                        const key = `${type}-${id}`;
-                        let value = await readData('keys', key);
+                        let value;
+                        if (isEphemeral) {
+                            value = await fsReadKey(type, id);
+                        } else {
+                            value = await readData('keys', `${type}-${id}`);
+                        }
                         // v7: proto API now exposes only .create / .encode / .decode.
-                        // .fromObject removed → use .create for app-state-sync-key hydration.
                         if (type === 'app-state-sync-key' && value) {
                             value = proto.Message.AppStateSyncKeyData.create(value);
                         }
@@ -95,45 +175,56 @@ async function useMongoAuthState(botId) {
             },
 
             set: async (data) => {
-                // Single bulkWrite collapses 1000 round-trips into one TCP
-                // exchange. Per-entry updateOne previously saturated the event
-                // loop for 5-30s on a 1k-member group send (1000 AES encrypts +
-                // 1000 Mongo round-trips) → WS keepalive missed → 408 reconnect
-                // cycle. Baileys' addTransactionCapability serializes state.set
-                // per socket (auth-utils.js:103-117), so concurrent same-key
-                // upserts can't race → ordered:false is safe and parallelizes
-                // server-side.
-                const ops = [];
+                // Split mutations: ephemeral → filesystem (no AES, no Mongo
+                // round-trip), durable → Mongo bulkWrite encrypted. Run both
+                // pools in parallel so the slower one bounds wall time.
+                const fsTasks = [];
+                const mongoOps = [];
                 for (const category in data) {
+                    const isEphemeral = EPHEMERAL_CATEGORIES.has(category);
                     for (const id in data[category]) {
                         const value = data[category][id];
-                        const dataKey = `${category}-${id}`;
-                        if (value) {
-                            const serialized = JSON.stringify(value, BufferJSON.replacer);
-                            const encrypted = encryption.encrypt(serialized);
-                            ops.push({
-                                updateOne: {
-                                    filter: { botId, dataType: 'keys', dataKey },
-                                    update: { $set: { data: encrypted } },
-                                    upsert: true,
-                                }
-                            });
+                        if (isEphemeral) {
+                            if (value) {
+                                fsTasks.push(fsWriteKey(category, id, value));
+                            } else {
+                                fsTasks.push(fsDeleteKey(category, id));
+                            }
                         } else {
-                            ops.push({
-                                deleteOne: {
-                                    filter: { botId, dataType: 'keys', dataKey }
-                                }
-                            });
+                            const dataKey = `${category}-${id}`;
+                            if (value) {
+                                const serialized = JSON.stringify(value, BufferJSON.replacer);
+                                const encrypted = encryption.encrypt(serialized);
+                                mongoOps.push({
+                                    updateOne: {
+                                        filter: { botId, dataType: 'keys', dataKey },
+                                        update: { $set: { data: encrypted } },
+                                        upsert: true,
+                                    }
+                                });
+                            } else {
+                                mongoOps.push({
+                                    deleteOne: {
+                                        filter: { botId, dataType: 'keys', dataKey }
+                                    }
+                                });
+                            }
                         }
                     }
                 }
-                if (!ops.length) return;
-                // Chunk at 500 ops — bounds wire packet (~2MB worst-case for
-                // 500 × 4KB encrypted blobs), well under Mongo's 16MB op limit.
-                const CHUNK = 500;
-                for (let i = 0; i < ops.length; i += CHUNK) {
-                    await WaAuthState.bulkWrite(ops.slice(i, i + CHUNK), { ordered: false });
-                }
+
+                const mongoChain = (async () => {
+                    if (!mongoOps.length) return;
+                    const CHUNK = 500;
+                    for (let i = 0; i < mongoOps.length; i += CHUNK) {
+                        await WaAuthState.bulkWrite(mongoOps.slice(i, i + CHUNK), { ordered: false });
+                    }
+                })();
+
+                await Promise.all([
+                    fsTasks.length ? Promise.all(fsTasks) : Promise.resolve(),
+                    mongoChain,
+                ]);
             }
         }
     };
