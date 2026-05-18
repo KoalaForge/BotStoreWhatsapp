@@ -2,6 +2,7 @@ const { Boom } = require('@hapi/boom');
 const clc = require('cli-color');
 const moment = require('moment-timezone');
 const pino = require('pino');
+const { NodeCache } = require('@cacheable/node-cache');
 const { useMongoAuthState } = require('../whatsapp/mongoAuthState');
 const { loadBaileys } = require('../whatsapp/baileysLoader');
 const { EventEmitter } = require('events');
@@ -107,6 +108,24 @@ class WaConnection extends EventEmitter {
         this._watchdogInterval = null;
         // Session purge handle, captured from useMongoAuthState() in start().
         this._purgePeerSession = null;
+        // Throttle decrypt-failure logs per peer so a single desynced peer in
+        // a busy group can't flood the console after a 408 reconnect.
+        this._decryptLogLast = new Map();
+        // Per-WaConnection user-device + media caches. Persist across
+        // reconnects so USync queries (1000-member groups → 1000 device
+        // lookups per send) don't refetch on every transient WS drop.
+        // 24h TTL: device lists change only when a peer adds/removes a
+        // linked device, which is rare.
+        this._userDevicesCache = new NodeCache({
+            stdTTL: 86400,
+            useClones: false,
+            checkperiod: 600,
+        });
+        this._mediaCache = new NodeCache({
+            stdTTL: 86400,
+            useClones: false,
+            checkperiod: 600,
+        });
         // Pin device identity for the lifetime of this instance — Baileys
         // pairing breaks if the browser fingerprint changes mid-session.
         // Prefer the persisted profile from DB so reconnects/restarts keep
@@ -236,31 +255,47 @@ class WaConnection extends EventEmitter {
     // When a peer accumulates ≥ 3 ciphertext decode failures within 5 min we
     // delete its session-* docs from Mongo. Next inbound message from that
     // peer triggers a clean prekey bundle exchange — no re-pair needed.
-    async _recordDecryptFailure(jid, messageId) {
+    async _recordDecryptFailure(jid, messageId, participant) {
         if (!jid) return;
+        // For group messages, the desynced peer is in `participant`, not the
+        // group JID. Resolving here lets us purge that peer's pairwise session
+        // and stop the Bad MAC storm — without this, every subsequent group
+        // msg from the same peer regenerates the same decrypt failure.
+        const peerJid = (typeof jid === 'string' && jid.endsWith('@g.us') && participant)
+            ? participant
+            : jid;
+
         const now = Date.now();
-        const entry = this._decryptFailures.get(jid) || { count: 0, firstAt: now };
+        const entry = this._decryptFailures.get(peerJid) || { count: 0, firstAt: now };
         // Reset window if last failure was > 5 min ago.
         if (now - entry.firstAt > 5 * 60_000) {
             entry.count = 0;
             entry.firstAt = now;
         }
         entry.count += 1;
-        this._decryptFailures.set(jid, entry);
+        this._decryptFailures.set(peerJid, entry);
 
-        log('WARN', `Decrypt failure for bot ${this.botId} from ${jid} (count=${entry.count}, msg=${messageId || 'n/a'})`);
-        this._emit('decrypt_error', { from: jid, message_id: messageId || null, count: entry.count });
+        // Throttle log to once per 30s per peer — a single desynced participant
+        // in a busy group can fire dozens of failures back-to-back.
+        const lastLog = this._decryptLogLast.get(peerJid) || 0;
+        if (now - lastLog > 30_000) {
+            this._decryptLogLast.set(peerJid, now);
+            log('WARN', `Decrypt failure for bot ${this.botId} from ${peerJid} (count=${entry.count}, msg=${messageId || 'n/a'})`);
+        }
+        this._emit('decrypt_error', { from: peerJid, message_id: messageId || null, count: entry.count });
 
-        // Only purge real DM peers — skip groups, broadcasts, status, lid.
-        const isDm = typeof jid === 'string' && jid.endsWith('@s.whatsapp.net');
+        // Purge real peer sessions (DM peers — `@s.whatsapp.net`). Includes
+        // group participants resolved above.
+        const isDm = typeof peerJid === 'string' && peerJid.endsWith('@s.whatsapp.net');
         if (isDm && entry.count >= 3 && this._purgePeerSession) {
             try {
-                await this._purgePeerSession(jid);
-                this._decryptFailures.delete(jid);
-                log('INFO', `Purged stale session for ${jid} (bot ${this.botId}). Peer prekey bundle will create a fresh session.`);
-                this._emit('session_purged', { jid });
+                await this._purgePeerSession(peerJid);
+                this._decryptFailures.delete(peerJid);
+                this._decryptLogLast.delete(peerJid);
+                log('INFO', `Purged stale session for ${peerJid} (bot ${this.botId}). Peer prekey bundle will create a fresh session.`);
+                this._emit('session_purged', { jid: peerJid });
             } catch (err) {
-                log('ERROR', `Failed to purge session for ${jid} (bot ${this.botId}): ${err.message}`);
+                log('ERROR', `Failed to purge session for ${peerJid} (bot ${this.botId}): ${err.message}`);
             }
         }
     }
@@ -476,8 +511,19 @@ class WaConnection extends EventEmitter {
             markOnlineOnConnect: true,
             keepAliveIntervalMs: 30_000,           // Baileys default
             connectTimeoutMs: 60_000,
-            defaultQueryTimeoutMs: 60_000,
+            // 90s (was 60s) — USync device-list queries on 1000-member groups
+            // can take 30-60s on slow networks. Tighter timeout aborts the
+            // send mid-flight which triggers a reconnect storm.
+            defaultQueryTimeoutMs: 90_000,
             retryRequestDelayMs: 2_000,
+            // Don't re-emit our own outbound messages back into the upsert
+            // handler — saves one decode + filter pass per send. Receivers
+            // still see them (server echoes to other devices).
+            emitOwnEvents: false,
+            // Skip MAC verification of app-state patches/snapshots. Verifying
+            // every mutation is CPU-heavy and unnecessary when the auth state
+            // is already encrypted at rest (mongoAuthState).
+            appStateMacVerification: { patch: false, snapshot: false },
             // getMessage backed by in-memory LRU cache — lets Baileys answer
             // peer retry receipts with the original ciphertext after a socket
             // restart, breaking the "counter drift → Bad MAC" cycle.
@@ -488,6 +534,13 @@ class WaConnection extends EventEmitter {
             // large groups. Repeated parse blocks the event loop and starves
             // keepalive (→ code 408 disconnects).
             cachedGroupMetadata: async (jid) => getCachedGroupMetadata(socketRef, jid),
+            // Persistent device-list cache. Without this, sending to a
+            // 1000-member group triggers 1000 USync device lookups every
+            // single time — minutes of round-trips and event-loop block.
+            userDevicesCache: this._userDevicesCache,
+            // Persistent media upload cache — reuse upload result for the
+            // same media buffer across sends (e.g. catalog banner).
+            mediaCache: this._mediaCache,
             // Hard cap retry receipts per message at 3 to prevent retry storms
             // that further desync sessions.
             msgRetryCounterCache: {
@@ -702,7 +755,11 @@ class WaConnection extends EventEmitter {
                 // gives up on this message). Fires auto session-purge after
                 // threshold — see _recordDecryptFailure.
                 if (msg.messageStubType === CIPHERTEXT_STUB && !msg.key?.fromMe) {
-                    this._recordDecryptFailure(msg.key?.remoteJid, msg.key?.id).catch(() => {});
+                    this._recordDecryptFailure(
+                        msg.key?.remoteJid,
+                        msg.key?.id,
+                        msg.key?.participant
+                    ).catch(() => {});
                     continue;
                 }
 

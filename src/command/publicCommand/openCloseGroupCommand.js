@@ -9,6 +9,7 @@ const {
     summarizeMeta,
 } = require('../../utils/groupParticipant');
 const { groupMetadataCached, invalidateGroupMetadata } = require('../../utils/groupMetadataCache');
+const { getGroupIndex, isAdminInIndex } = require('../../utils/groupAdminIndex');
 
 const TZ = 'Asia/Jakarta';
 const OPEN_TEXT  = '*Kita sudah OPEN ya* silahkan ketik `.list` untuk melihat daftar menu yang tersedia 🔥';
@@ -27,31 +28,27 @@ async function setGroupAnnouncement(ctx, mode, statusText) {
         return ctx.reply('Command ini hanya bisa digunakan di grup.');
     }
 
-    const meta = await groupMetadataCached(ctx.sock, ctx.chat).catch((err) => {
-        dlog('meta', `fetch failed: ${err?.message}`);
-        return null;
-    });
-    if (!meta) {
-        return ctx.reply('Gagal ambil info grup. Coba lagi.');
-    }
-
     const botBundle    = botIdentities(ctx.sock);
     const senderBundle = senderIdentities(ctx);
 
-    const botEntry    = findParticipant(meta, botBundle);
-    const senderEntry = findParticipant(meta, senderBundle);
+    // Admin checks via O(1) Set lookup on the derived index, not by iterating
+    // the participants array (which is 1000-element in large groups).
+    const index = await getGroupIndex(ctx.sock, ctx.chat, botBundle);
+    if (!index) {
+        return ctx.reply('Gagal ambil info grup. Coba lagi.');
+    }
 
     const senderIsBotAdmin = await isAdmin(ctx.from, ctx);
-    const senderIsGroupAdmin = isParticipantAdmin(senderEntry);
+    const senderIsGroupAdmin = isAdminInIndex(index, senderBundle);
 
     if (!senderIsBotAdmin && !senderIsGroupAdmin) {
         return ctx.reply('*Akses ditolak.* Hanya bot admin atau admin grup yang boleh.');
     }
 
-    if (!isParticipantAdmin(botEntry)) {
+    if (!index.botIsAdmin) {
         dlog('bot-admin-check',
             `botIds=[${[...botBundle.ids].join(',')}] botPhones=[${[...botBundle.phones].join(',')}] ` +
-            `botEntry=${botEntry ? JSON.stringify({ id: botEntry.id, lid: botEntry.lid, jid: botEntry.jid, admin: botEntry.admin, isAdmin: botEntry.isAdmin, isSuperAdmin: botEntry.isSuperAdmin }) : 'NOT_FOUND'} | ${summarizeMeta(meta)}`
+            `participants=${index.participantCount} admins=${index.adminIds.size}`
         );
         return ctx.reply('⚠️ *Bot bukan admin grup.* Jadikan bot admin dulu untuk pakai command ini.');
     }

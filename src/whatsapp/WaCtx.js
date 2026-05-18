@@ -192,6 +192,47 @@ class WaCtx {
     // ==========================================
 
     /**
+     * Wrap sock.sendMessage with retry on transient WS errors. Sends to a large
+     * group can take several seconds (USync device fanout + per-device encrypt);
+     * a 408 / 428 / "Connection Closed" mid-flight is recoverable once the WS
+     * reconnects. Without retry, every transient drop loses a user reply.
+     *
+     * Non-transient errors (auth, forbidden, message-not-found, validation)
+     * propagate immediately — retry would just delay the failure.
+     *
+     * @private
+     */
+    async _sendWithRetry(jid, content, options = {}, maxRetries = 2) {
+        let lastErr;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            // Pre-flight readiness check: if the socket isn't OPEN, wait a
+            // bit for reconnect before throwing. ws.readyState === 1 → OPEN.
+            const ws = this.sock?.ws;
+            if (!this.sock || (ws && ws.readyState !== 1)) {
+                await new Promise(r => setTimeout(r, 1500));
+            }
+            try {
+                return await this.sock.sendMessage(jid, content, options);
+            } catch (err) {
+                lastErr = err;
+                const errMsg = err?.message || '';
+                const code = err?.output?.statusCode;
+                const transient = errMsg.includes('Connection Closed')
+                    || errMsg.includes('Timed Out')
+                    || code === 408
+                    || code === 428
+                    || code === 500
+                    || code === 503;
+                if (!transient || attempt === maxRetries) throw err;
+                // Backoff: 1.5s, 3.5s. Server-side device-slot re-registration
+                // after a 408 typically clears in ~2-3s.
+                await new Promise(r => setTimeout(r, 1500 + attempt * 2000));
+            }
+        }
+        throw lastErr;
+    }
+
+    /**
      * Simulate human behavior before sending: typing indicator + natural delay.
      * Skipped when options._skipHumanize is true (e.g. internal/system messages).
      * @param {number} [charCount=0] - Length of outgoing text for proportional delay
@@ -234,10 +275,7 @@ class WaCtx {
      */
     async reply(text, options = {}) {
         await this._humanize(text.length, options);
-        return this.sock.sendMessage(this.chat, {
-            text,
-            ...options
-        });
+        return this._sendWithRetry(this.chat, { text, ...options });
     }
 
     /**
@@ -308,7 +346,7 @@ class WaCtx {
             caption: caption || '',
             ...options
         };
-        return this.sock.sendMessage(this.chat, content);
+        return this._sendWithRetry(this.chat, content);
     }
 
     /**
@@ -322,7 +360,7 @@ class WaCtx {
     async sendDocument(document, fileName, caption, mimetype) {
         await this._humanize((caption || '').length);
 
-        return this.sock.sendMessage(this.chat, {
+        return this._sendWithRetry(this.chat, {
             document,
             fileName,
             caption: caption || '',
@@ -337,7 +375,7 @@ class WaCtx {
      * @returns {Promise<Object>}
      */
     async sendTo(jid, content) {
-        return this.sock.sendMessage(jid, content);
+        return this._sendWithRetry(jid, content);
     }
 
     /**
@@ -347,7 +385,7 @@ class WaCtx {
      */
     async deleteMessage(key) {
         const msgKey = key || this.messageKey;
-        return this.sock.sendMessage(this.chat, { delete: msgKey });
+        return this._sendWithRetry(this.chat, { delete: msgKey });
     }
 
     /**

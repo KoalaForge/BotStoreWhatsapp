@@ -12,6 +12,7 @@ const {
     mentionPhone,
 } = require('../../utils/groupParticipant');
 const { groupMetadataCached, invalidateGroupMetadata } = require('../../utils/groupMetadataCache');
+const { getGroupIndex, isAdminInIndex } = require('../../utils/groupAdminIndex');
 
 const USAGE =
     '*Format Kick*\n\n' +
@@ -61,26 +62,32 @@ async function kickCommand(ctx) {
         return ctx.reply('Command ini hanya bisa digunakan di grup.');
     }
 
+    const botBundle    = botIdentities(ctx.sock);
+    const senderBundle = senderIdentities(ctx);
+
+    // O(1) admin checks via derived index.
+    const index = await getGroupIndex(ctx.sock, ctx.chat, botBundle);
+    if (!index) {
+        return ctx.reply('Gagal ambil info grup. Coba lagi.');
+    }
+
+    const senderIsBotAdmin = await isAdmin(ctx.from, ctx);
+    if (!senderIsBotAdmin && !isAdminInIndex(index, senderBundle)) {
+        return ctx.reply('*Akses ditolak.* Hanya bot admin atau admin grup yang boleh.');
+    }
+
+    if (!index.botIsAdmin) {
+        return ctx.reply('⚠️ *Bot bukan admin grup.* Jadikan bot admin dulu untuk pakai command ini.');
+    }
+
+    // Full meta needed below to resolve targetEntry.id (the exact JID Baileys
+    // expects in groupParticipantsUpdate). Warm cache hit.
     const meta = await groupMetadataCached(ctx.sock, ctx.chat).catch((err) => {
         dlog('meta', `fetch failed: ${err?.message}`);
         return null;
     });
     if (!meta) {
         return ctx.reply('Gagal ambil info grup. Coba lagi.');
-    }
-
-    const botBundle    = botIdentities(ctx.sock);
-    const senderBundle = senderIdentities(ctx);
-
-    const senderEntry = findParticipant(meta, senderBundle);
-    const senderIsBotAdmin = await isAdmin(ctx.from, ctx);
-    if (!senderIsBotAdmin && !isParticipantAdmin(senderEntry)) {
-        return ctx.reply('*Akses ditolak.* Hanya bot admin atau admin grup yang boleh.');
-    }
-
-    const botEntry = findParticipant(meta, botBundle);
-    if (!isParticipantAdmin(botEntry)) {
-        return ctx.reply('⚠️ *Bot bukan admin grup.* Jadikan bot admin dulu untuk pakai command ini.');
     }
 
     const target = resolveTargetBundle(ctx);

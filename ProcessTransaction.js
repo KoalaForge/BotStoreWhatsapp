@@ -259,7 +259,24 @@ async function resolveWebhookOnlyCodes(codes) {
 // Main entry point
 // ---------------------------------------------------------------------------
 
-async function ProcessingTransaction(sock, botId = null) {
+/**
+ * Cheap socket-liveness probe so we don't fire WhatsApp calls on a half-dead
+ * sock during reconnect. Baileys' WS lives at sock.ws with standard WebSocket
+ * readyState (1 = OPEN). When sock is null or WS isn't OPEN, abort the tick.
+ */
+function _sockReady(sock, signal) {
+    if (signal?.aborted) return false;
+    if (!sock) return false;
+    const rs = sock.ws?.readyState;
+    if (rs !== undefined && rs !== 1) return false;
+    return true;
+}
+
+async function ProcessingTransaction(sock, botId = null, opts = {}) {
+    const { signal } = opts;
+    // Bail dini bila socket sudah tidak hidup. Cegah Promise.race timeout
+    // race 15s di setInterval caller saat 408 fire mid-tick.
+    if (!_sockReady(sock, signal)) return;
     try {
         const baseConditions = [
             {
@@ -312,6 +329,9 @@ async function ProcessingTransaction(sock, botId = null) {
 
         if (pendingTransactions.length === 0) return;
 
+        // Recheck readiness after the DB roundtrip — sock may have died during it.
+        if (!_sockReady(sock, signal)) return;
+
         // Resolve which payment methods are webhook_only (should not be polled for payment status)
         // SINGLE mode: always poll everything (no processing_mode filtering)
         let pollableTransactions;
@@ -352,6 +372,9 @@ async function ProcessingTransaction(sock, botId = null) {
                 ownerId: t.ownerId
             });
         }));
+
+        // Recheck readiness — statusResults can take seconds for gateway HTTP.
+        if (!_sockReady(sock, signal)) return;
 
         // Process all transactions concurrently — each is independent.
         // Promise.allSettled ensures one failing tx doesn't block others.

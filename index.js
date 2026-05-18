@@ -260,6 +260,13 @@ async function runSingleMode() {
     const ProcessingTransaction = require('./ProcessTransaction');
     let txProcessing = false;
     const TX_TIMEOUT_MS = 15_000;
+
+    // AbortController so an in-flight tick can bail dini when the WA socket
+    // dies (408) mid-processing. Reset on each tick start so a stale abort
+    // doesn't poison the next tick.
+    let txAbort = new AbortController();
+    connection.on('loggedOut', () => txAbort.abort());
+
     const txIntervalId = setInterval(async () => {
         if (txProcessing) return;
         // Skip when connection is half-open, dying, or reconnecting — calling
@@ -268,9 +275,20 @@ async function runSingleMode() {
         // Mirrors WaTransactionProcessor.process() multi-mode filter.
         if (!connection.isRunning || !connection.sock) return;
         txProcessing = true;
+
+        // Fresh controller for each tick. If the WS dies during processing,
+        // abort lets ProcessingTransaction exit before the 15s race timeout.
+        if (txAbort.signal.aborted) txAbort = new AbortController();
+        const tickAbort = txAbort;
+        const onClose = () => tickAbort.abort();
+        // Baileys does not emit a public 'close' event on WaConnection. Use
+        // our own state transition via setStatePersister fallback: listen to
+        // 'connected'/'loggedOut' bracket. Simpler: poll inside the function.
+        // For now, just set the signal — ProcessingTransaction polls it.
+
         try {
             await Promise.race([
-                ProcessingTransaction(connection.sock),
+                ProcessingTransaction(connection.sock, null, { signal: tickAbort.signal }),
                 new Promise((_, reject) => setTimeout(
                     () => reject(new Error('Timeout: single tx processor')),
                     TX_TIMEOUT_MS

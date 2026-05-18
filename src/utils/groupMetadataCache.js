@@ -77,6 +77,12 @@ function invalidateGroupMetadata(sock, jid) {
     if (!jid) return;
     const cache = _caches.get(sock);
     if (cache) cache.delete(jid);
+    // Chain to the derived admin index — when metadata is stale, the index
+    // built from it is stale too. Lazy require to avoid circular dep.
+    try {
+        const { invalidateGroupIndex } = require('./groupAdminIndex');
+        invalidateGroupIndex(sock, jid);
+    } catch (_) { /* admin index module optional */ }
 }
 
 /**
@@ -85,6 +91,10 @@ function invalidateGroupMetadata(sock, jid) {
 function invalidateAllForSock(sock) {
     const cache = _caches.get(sock);
     if (cache) cache.clear();
+    try {
+        const { invalidateAllForSock: dropIdx } = require('./groupAdminIndex');
+        dropIdx(sock);
+    } catch (_) { /* admin index module optional */ }
 }
 
 module.exports = {

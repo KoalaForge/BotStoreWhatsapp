@@ -9,6 +9,7 @@ const {
     mentionPhone,
 } = require('../../utils/groupParticipant');
 const { groupMetadataCached } = require('../../utils/groupMetadataCache');
+const { getGroupIndex, isAdminInIndex } = require('../../utils/groupAdminIndex');
 
 const MAX_MENTIONS = 1024;
 
@@ -36,19 +37,27 @@ async function commonGate(ctx) {
         return null;
     }
 
-    const meta = await groupMetadataCached(ctx.sock, ctx.chat).catch(() => null);
-    if (!meta) {
+    const botBundle    = botIdentities(ctx.sock);
+    const senderBundle = senderIdentities(ctx);
+
+    // O(1) admin check via derived index (no full participants iteration).
+    const index = await getGroupIndex(ctx.sock, ctx.chat, botBundle);
+    if (!index) {
         await ctx.reply('Gagal ambil info grup. Coba lagi.');
         return null;
     }
 
-    const botBundle    = botIdentities(ctx.sock);
-    const senderBundle = senderIdentities(ctx);
-
-    const senderEntry = findParticipant(meta, senderBundle);
     const senderIsBotAdmin = await isAdmin(ctx.from, ctx);
-    if (!senderIsBotAdmin && !isParticipantAdmin(senderEntry)) {
+    if (!senderIsBotAdmin && !isAdminInIndex(index, senderBundle)) {
         await ctx.reply('*Akses ditolak.* Hanya bot admin atau admin grup yang boleh.');
+        return null;
+    }
+
+    // Full meta still needed downstream to build mention list — fetch from
+    // cache (warm hit since getGroupIndex already populated it).
+    const meta = await groupMetadataCached(ctx.sock, ctx.chat).catch(() => null);
+    if (!meta) {
+        await ctx.reply('Gagal ambil info grup. Coba lagi.');
         return null;
     }
 

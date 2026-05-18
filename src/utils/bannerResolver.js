@@ -17,7 +17,12 @@ async function resolveFromCtx(ctx) {
 }
 
 async function sendWithBanner(ctx, text, bannerSource, options = {}) {
-    if (!bannerSource) return ctx.reply(text, options);
+    // In groups, skip the banner image. Sending media to a large group fans
+    // out USync device lookups + per-device encryption for every participant
+    // — for a 1000-member group that's enough work to block the event loop
+    // long enough to miss WS keepalive (→ code 408 disconnect). Text-only
+    // replies sidestep the media fanout entirely.
+    if (!bannerSource || ctx.isGroup) return ctx.reply(text, options);
     try {
         return await ctx.sendImage(bannerSource, text, options);
     } catch (err) {
