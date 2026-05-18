@@ -8,22 +8,16 @@ const clc = require('cli-color');
  * Each bot has its own isolated auth data identified by botId.
  * All data is encrypted at rest using AES-256-GCM.
  *
- * Hot signal sessions are wrapped with `makeCacheableSignalKeyStore` so that
- * encrypting a fan-out message (e.g. group with 1k participants) doesn't
- * fire ~2k MongoDB roundtrips per send. Writes still persist to MongoDB
- * synchronously — cache is read-through + write-through, no durability loss.
- *
  * v7 NOTE: auth-state schema gained `lid-mapping`, `device-list`, `tctoken`
  * key categories. They flow through the same dynamic `keys.set/get` API and
  * persist via the existing `keys-{type}-{id}` document layout — no schema change.
  *
  * @param {string} botId - Unique identifier for this bot instance
- * @param {Object} [logger] - Optional pino logger; passed to makeCacheableSignalKeyStore
  * @returns {Promise<{ state: AuthenticationState, saveCreds: () => Promise<void> }>}
  */
-async function useMongoAuthState(botId, logger) {
+async function useMongoAuthState(botId) {
     const baileys = await loadBaileys();
-    const { proto, initAuthCreds, makeCacheableSignalKeyStore } = baileys;
+    const { proto, initAuthCreds } = baileys;
 
     const encryption = EncryptionService.getInstance();
 
@@ -80,7 +74,9 @@ async function useMongoAuthState(botId, logger) {
         await writeData('creds', 'main', creds);
     }
 
-    const rawKeys = {
+    const state = {
+        creds,
+        keys: {
             get: async (type, ids) => {
                 const data = {};
                 await Promise.all(
@@ -113,11 +109,7 @@ async function useMongoAuthState(botId, logger) {
                 }
                 await Promise.all(tasks);
             }
-    };
-
-    const state = {
-        creds,
-        keys: makeCacheableSignalKeyStore(rawKeys, logger)
+        }
     };
 
     return {

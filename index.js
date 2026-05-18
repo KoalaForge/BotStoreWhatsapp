@@ -13,7 +13,6 @@ const connectDatabase = require('./src/database/connect');
 const modeService = require('./src/services/modeService');
 const WaCtx = require('./src/whatsapp/WaCtx');
 const { humanDelay } = require('./src/utils/humanDelay');
-const { runOnJidQueue } = require('./src/utils/perJidQueue');
 
 // Display startup banner
 console.clear();
@@ -78,38 +77,33 @@ async function runSingleMode() {
     // Create message router (no botId in SINGLE mode)
     const router = setupWhatsApp(null);
 
-    // Message handler: wraps incoming messages in WaCtx and routes them.
-    // Per-jid queue serializes handlers within a single chat so slow work
-    // (large group send, long DB query) can't block sends to other chats.
+    // Message handler: wraps incoming messages in WaCtx and routes them
     const handleMessage = async (sock, msg, botId) => {
         const ctx = new WaCtx(sock, msg, botId);
-
-        // Group fast-path BEFORE the queue — chitchat in 1k-member groups
-        // would otherwise flood the queue with no-op tasks and crowd out
-        // real commands. Mirrors waGroupFilter drop conditions
-        // (src/middleware/waGroupFilter.js:70).
-        if (ctx.isGroup) {
-            const text = (ctx.message || '').trim();
-            if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
-        }
-
-        return runOnJidQueue(ctx.chat, async () => {
-            try {
-                // Humanize: random delay before reading (humans don't read instantly)
-                await humanDelay(400, 1500);
-                await ctx.markRead();
-
-                // Small pause after reading before "thinking" and replying
-                await humanDelay(200, 800);
-                await router.route(ctx);
-            } catch (err) {
-                console.error(
-                    clc.red.bold("[ ERROR ]") +
-                    ` [${moment().format('HH:mm:ss')}]:` +
-                    clc.red(` Handler error: ${err.message}`)
-                );
+        try {
+            // Group fast-path: drop chitchat BEFORE humanDelay + markRead so
+            // bulk batches from large groups don't burn WS bandwidth on
+            // receipts the bot will never reply to. Mirrors waGroupFilter
+            // drop conditions (src/middleware/waGroupFilter.js:70).
+            if (ctx.isGroup) {
+                const text = (ctx.message || '').trim();
+                if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
             }
-        });
+
+            // Humanize: random delay before reading (humans don't read instantly)
+            await humanDelay(400, 1500);
+            await ctx.markRead();
+
+            // Small pause after reading before "thinking" and replying
+            await humanDelay(200, 800);
+            await router.route(ctx);
+        } catch (err) {
+            console.error(
+                clc.red.bold("[ ERROR ]") +
+                ` [${moment().format('HH:mm:ss')}]:` +
+                clc.red(` Handler error: ${err.message}`)
+            );
+        }
     };
 
     // Create WaConnection for SINGLE mode.
@@ -336,30 +330,30 @@ async function runMultiMode() {
         }
 
         const ctx = new WaCtx(sock, msg, botId);
-
-        // Group fast-path BEFORE the queue (see SINGLE-mode comment above).
-        if (ctx.isGroup) {
-            const text = (ctx.message || '').trim();
-            if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
-        }
-
-        return runOnJidQueue(ctx.chat, async () => {
-            try {
-                // Humanize: random delay before reading (humans don't read instantly)
-                await humanDelay(400, 1500);
-                await ctx.markRead();
-
-                // Small pause after reading before "thinking" and replying
-                await humanDelay(200, 800);
-                await router.route(ctx);
-            } catch (err) {
-                console.error(
-                    clc.red.bold("[ ERROR ]") +
-                    ` [${moment().format('HH:mm:ss')}]:` +
-                    clc.red(` Handler error (bot ${botId}): ${err.message}`)
-                );
+        try {
+            // Group fast-path: drop chitchat BEFORE humanDelay + markRead so
+            // bulk batches from large groups don't burn WS bandwidth on
+            // receipts the bot will never reply to. Mirrors waGroupFilter
+            // drop conditions (src/middleware/waGroupFilter.js:70).
+            if (ctx.isGroup) {
+                const text = (ctx.message || '').trim();
+                if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
             }
-        });
+
+            // Humanize: random delay before reading (humans don't read instantly)
+            await humanDelay(400, 1500);
+            await ctx.markRead();
+
+            // Small pause after reading before "thinking" and replying
+            await humanDelay(200, 800);
+            await router.route(ctx);
+        } catch (err) {
+            console.error(
+                clc.red.bold("[ ERROR ]") +
+                ` [${moment().format('HH:mm:ss')}]:` +
+                clc.red(` Handler error (bot ${botId}): ${err.message}`)
+            );
+        }
     });
 
     // Initialize all bots (loads from database, starts connections)

@@ -201,11 +201,6 @@ class WaCtx {
     async _humanize(charCount = 0, options = {}) {
         if (options._skipHumanize) return;
 
-        // Dead-WS short-circuit — handler is holding a sock captured before
-        // a 428/408 reconnect. Don't sleep through humanDelay only to throw
-        // on the eventual sendMessage. Caller's await chain unwinds cleanly.
-        if (this.sock?.isHealthy && !this.sock.isHealthy()) return;
-
         // Rate limiter — when over limit, brief backoff (env-tunable)
         const check = canSendOutgoing(this.chat);
         if (!check.allowed) {
@@ -239,7 +234,6 @@ class WaCtx {
      */
     async reply(text, options = {}) {
         await this._humanize(text.length, options);
-        if (this.sock?.isHealthy && !this.sock.isHealthy()) return;
         return this.sock.sendMessage(this.chat, {
             text,
             ...options

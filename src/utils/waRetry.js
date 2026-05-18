@@ -35,34 +35,17 @@ const isRetryable = (error) => {
     return true;
 };
 
-/** True iff the Baileys WS is currently OPEN (readyState 1). */
-const isWsOpen = (sock) => sock?.ws?.readyState === 1;
-
 /**
  * Execute an async operation with retry logic for WhatsApp/Baileys.
  * Exponential backoff: 1s, 2s, 3s.
  * Never throws — returns undefined on final failure.
  *
- * When `sock` is provided, each attempt is gated on the WS being open.
- * Prevents burning the full backoff window pumping retries into a dead
- * socket — the reconnect path will create a fresh sock and the caller
- * (handler) will be re-driven by the next inbound message.
- *
  * @param {Function} operation - Async function to execute
  * @param {number} [maxRetries=3] - Maximum retry attempts
- * @param {Object} [sock] - Optional Baileys sock for WS health gating
  * @returns {Promise<*>} - Operation result or undefined
  */
-const withRetry = async (operation, maxRetries = MAX_RETRIES, sock = null) => {
+const withRetry = async (operation, maxRetries = MAX_RETRIES) => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        if (sock && !isWsOpen(sock)) {
-            console.log(
-                clc.yellow("[ WARN ]") +
-                ` [${moment().format('HH:mm:ss')}]: ` +
-                clc.blueBright(`WhatsApp WS closed — skipping send (attempt ${attempt}/${maxRetries})`)
-            );
-            return;
-        }
         try {
             return await operation();
         } catch (error) {
@@ -97,6 +80,5 @@ const withRetry = async (operation, maxRetries = MAX_RETRIES, sock = null) => {
 };
 
 module.exports = {
-    withRetry,
-    isWsOpen
+    withRetry
 };
