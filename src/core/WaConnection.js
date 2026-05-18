@@ -119,6 +119,12 @@ class WaConnection extends EventEmitter {
         this._decryptCircuit = new Map();
         this._decryptCircuitThreshold = 10;
         this._decryptCircuitSilenceMs = 5 * 60_000;
+        // Global last-purge timestamp — throttles _recordDecryptFailure's
+        // purge cascade so a 1k-member group's catch-up failure wave can't
+        // trigger 30+ session purges in seconds (each purge itself causes a
+        // prekey re-exchange → libsignal closeSession churn → storm).
+        this._lastPurgeAt = 0;
+        this._purgeRateLimitMs = 30_000;
         // Per-WaConnection user-device + media caches. Persist across
         // reconnects so USync queries (1000-member groups → 1000 device
         // lookups per send) don't refetch on every transient WS drop.
@@ -327,8 +333,16 @@ class WaConnection extends EventEmitter {
         // group participants resolved above.
         const isDm = typeof peerJid === 'string' && peerJid.endsWith('@s.whatsapp.net');
         if (isDm && entry.count >= 3 && this._purgePeerSession) {
+            // Global rate-limit: even if many peers cross the threshold in
+            // quick succession (catch-up wave on a large group), only fire
+            // one purge per 30s. Remaining peers stay flagged and qualify on
+            // the next eligible window, or self-heal via Baileys' retry path.
+            if (this._lastPurgeAt && Date.now() - this._lastPurgeAt < this._purgeRateLimitMs) {
+                return;
+            }
             try {
                 await this._purgePeerSession(peerJid);
+                this._lastPurgeAt = Date.now();
                 this._decryptFailures.delete(peerJid);
                 this._decryptLogLast.delete(peerJid);
                 log('INFO', `Purged stale session for ${peerJid} (bot ${this.botId}). Peer prekey bundle will create a fresh session.`);
@@ -407,23 +421,12 @@ class WaConnection extends EventEmitter {
             }
             log('INFO', `Prewarmed group metadata cache: ${count} group(s) for ${this.botId}`);
 
-            // Warm userDevicesCache for allowlisted groups. First send to a
-            // 1000-member group is otherwise dominated by a cold USync query.
-            // Opt-in via WA_GROUP_ALLOWLIST so we don't hammer the server with
-            // device lookups for every group the bot is in.
-            const allowlist = (process.env.WA_GROUP_ALLOWLIST || '')
-                .split(',').map(s => s.trim()).filter(Boolean);
-            if (allowlist.length > 0 && typeof this.sock.onWhatsApp === 'function') {
-                for (const groupJid of allowlist) {
-                    const meta = allMeta?.[groupJid];
-                    if (!meta?.participants?.length) continue;
-                    const jids = meta.participants.map(p => p.id).filter(Boolean);
-                    // Background fire-and-forget. onWhatsApp issues a batched
-                    // USync that populates userDevicesCache as a side-effect.
-                    this.sock.onWhatsApp(...jids).catch(() => {});
-                }
-                log('INFO', `Triggered USync prewarm for ${allowlist.length} allowlist group(s)`);
-            }
+            // userDevicesCache warms naturally on the first real send (which
+            // is gated by the 8s settle grace + reconnect storm flag in
+            // _sendWithRetry). The previous onWhatsApp(...1000jids) prewarm
+            // was the trigger for a mass server-side prekey-bundle push →
+            // libsignal session-close storm → 428 mid-USync on the next
+            // group send. Removed.
             return true;
         } catch (err) {
             log('WARN', `Group metadata prewarm failed for ${this.botId}: ${err?.message} — fallback to lazy`);
@@ -713,6 +716,11 @@ class WaConnection extends EventEmitter {
             }
 
             if (connection === 'open') {
+                // Capture reconnect-ness BEFORE the reset below — both
+                // _reconnectAttempts and _lastOpenAt get zeroed/restamped a
+                // few lines down, so the storm-gate check below would always
+                // see a "fresh" state without this snapshot.
+                const wasReconnect = this._lastOpenAt > 0 || this._reconnectAttempts > 0;
                 this.isRunning = true;
                 this.startedAt = new Date();
                 this._reconnectAttempts = 0;
@@ -724,6 +732,19 @@ class WaConnection extends EventEmitter {
                 // hits 428 "Connection Closed" while the server-side device
                 // slot finishes settling.
                 if (this.sock) this.sock._openedAt = Date.now();
+                // Reconnect storm gate: the first 20s after a reconnect (not
+                // initial pair), libsignal recreates sessions for peers that
+                // drifted while we were offline — mass closeSession calls
+                // (libsignal session_record.js:268) burn CPU and starve WS
+                // keepalive. _recordDecryptFailure's inbound-driven storm
+                // detection only fires when CIPHERTEXT stubs arrive; on a
+                // quiet 1k-member group it never trips and sends race the
+                // storm → 428 mid-USync. Setting _sessionStormUntil here
+                // makes WaCtx._sendWithRetry honor the gate even without
+                // inbound triggers. Skip on initial pair (no storm yet).
+                if (this.sock && wasReconnect) {
+                    this.sock._sessionStormUntil = Date.now() + 20_000;
+                }
                 this._startWatchdog();
                 log('INFO', `WhatsApp connected: ${this.botId} (${this.phoneNumber})`);
                 this._setState('connected');
