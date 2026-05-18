@@ -264,7 +264,10 @@ async function runSingleMode() {
     // Start transaction processing interval
     const ProcessingTransaction = require('./ProcessTransaction');
     let txProcessing = false;
-    const TX_TIMEOUT_MS = 15_000;
+    // 60s (was 15s) — sends to 1000-member groups legitimately take 30-50s
+    // (USync 1000-device fanout + sender-key encrypt). 15s was a false-positive
+    // mill; bot wasn't actually stuck, just busy.
+    const TX_TIMEOUT_MS = 60_000;
 
     // AbortController so an in-flight tick can bail dini when the WA socket
     // dies (408) mid-processing. Reset on each tick start so a stale abort
@@ -279,6 +282,11 @@ async function runSingleMode() {
         // and can provoke server-side 408 by sending on an unregistered WS.
         // Mirrors WaTransactionProcessor.process() multi-mode filter.
         if (!connection.isRunning || !connection.sock) return;
+        // Skip first 10s post-reconnect: server-side session slot needs to
+        // settle, prewarm needs to finish, libsignal session-recreation storm
+        // needs to drain. Firing sends inside this window reliably draws 428.
+        const openedAt = connection.sock._openedAt;
+        if (openedAt && Date.now() - openedAt < 10_000) return;
         txProcessing = true;
 
         // Fresh controller for each tick. If the WS dies during processing,

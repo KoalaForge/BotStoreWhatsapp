@@ -292,6 +292,20 @@ class WaConnection extends EventEmitter {
         entry.count += 1;
         this._decryptFailures.set(peerJid, entry);
 
+        // Session-storm detection: > 5 failures across all peers in 10s window
+        // = libsignal busy recreating sessions. Set a flag on the sock so
+        // outgoing sends (WaCtx._sendWithRetry) wait for it to drain before
+        // attempting — mid-storm sends reliably draw 428.
+        this._stormCounter = (this._stormCounter || []).filter(t => now - t < 10_000);
+        this._stormCounter.push(now);
+        if (this._stormCounter.length >= 5 && this.sock) {
+            const stormDeadline = now + 8_000;
+            if (!this.sock._sessionStormUntil || this.sock._sessionStormUntil < stormDeadline) {
+                this.sock._sessionStormUntil = stormDeadline;
+                log('WARN', `Session storm detected for bot ${this.botId} — deferring outgoing sends 8s`);
+            }
+        }
+
         // Throttle log to once per 30s per peer — a single desynced participant
         // in a busy group can fire dozens of failures back-to-back.
         const lastLog = this._decryptLogLast.get(peerJid) || 0;
@@ -392,6 +406,24 @@ class WaConnection extends EventEmitter {
                 setCachedGroupMetadata(this.sock, jid, meta);
             }
             log('INFO', `Prewarmed group metadata cache: ${count} group(s) for ${this.botId}`);
+
+            // Warm userDevicesCache for allowlisted groups. First send to a
+            // 1000-member group is otherwise dominated by a cold USync query.
+            // Opt-in via WA_GROUP_ALLOWLIST so we don't hammer the server with
+            // device lookups for every group the bot is in.
+            const allowlist = (process.env.WA_GROUP_ALLOWLIST || '')
+                .split(',').map(s => s.trim()).filter(Boolean);
+            if (allowlist.length > 0 && typeof this.sock.onWhatsApp === 'function') {
+                for (const groupJid of allowlist) {
+                    const meta = allMeta?.[groupJid];
+                    if (!meta?.participants?.length) continue;
+                    const jids = meta.participants.map(p => p.id).filter(Boolean);
+                    // Background fire-and-forget. onWhatsApp issues a batched
+                    // USync that populates userDevicesCache as a side-effect.
+                    this.sock.onWhatsApp(...jids).catch(() => {});
+                }
+                log('INFO', `Triggered USync prewarm for ${allowlist.length} allowlist group(s)`);
+            }
             return true;
         } catch (err) {
             log('WARN', `Group metadata prewarm failed for ${this.botId}: ${err?.message} — fallback to lazy`);
@@ -567,10 +599,13 @@ class WaConnection extends EventEmitter {
             markOnlineOnConnect: true,
             keepAliveIntervalMs: 30_000,           // Baileys default
             connectTimeoutMs: 60_000,
-            // 90s (was 60s) — USync device-list queries on 1000-member groups
-            // can take 30-60s on slow networks. Tighter timeout aborts the
-            // send mid-flight which triggers a reconnect storm.
-            defaultQueryTimeoutMs: 90_000,
+            // 180s — USync device-list queries on 1000-member groups can
+            // exceed 90s in practice; the payload (1000 device entries) parses
+            // sync and the server queues behind other heavy operations. A
+            // tighter timeout aborts the send mid-flight which triggers a
+            // reconnect storm. 180s gives a margin without being so high that
+            // genuinely stuck queries hang the bot.
+            defaultQueryTimeoutMs: 180_000,
             retryRequestDelayMs: 2_000,
             // Don't re-emit our own outbound messages back into the upsert
             // handler — saves one decode + filter pass per send. Receivers
@@ -622,6 +657,10 @@ class WaConnection extends EventEmitter {
         // can resolve botId without callers threading it through. Cache keys
         // by botId so they survive sock recreation on reconnect.
         this.sock._botId = this.botId;
+        // Expose _touchEvent so outgoing sends (WaCtx._sendWithRetry) keep the
+        // watchdog quiet. Without this, a 2-minute send to a 1000-member group
+        // looks like "no events" to the watchdog and trips a false WS restart.
+        this.sock._touchEvent = () => this._touchEvent();
 
         // -- Connection update events --
         this.sock.ev.on('connection.update', async (update) => {
@@ -900,13 +939,42 @@ class WaConnection extends EventEmitter {
         });
 
         // -- Group metadata cache invalidation --
-        // groups.update fires when subject/desc/settings change. Drop the
-        // cache entry so the next reader sees the new state.
+        // groups.update fires with a PARTIAL diff (subject/desc/settings
+        // change) — participants array is NOT included. Full-invalidate would
+        // force the next send to a cold groupMetadata fetch, which post-
+        // reconnect can return 428. Instead, merge the diff and keep the
+        // participants warm. The derived admin index is dropped (cheap to
+        // rebuild lazily).
         this.sock.ev.on('groups.update', (updates) => {
             if (!Array.isArray(updates)) return;
             for (const u of updates) {
-                if (u?.id) invalidateGroupMetadata(this.sock, u.id);
+                if (!u?.id) continue;
+                const old = getCachedGroupMetadata(this.sock, u.id);
+                if (old) {
+                    setCachedGroupMetadata(this.sock, u.id, { ...old, ...u });
+                }
+                try {
+                    const { invalidateGroupIndex } = require('../utils/groupAdminIndex');
+                    invalidateGroupIndex(this.sock, u.id);
+                } catch (_) { /* index module optional */ }
             }
+        });
+
+        // group-participants.update fires when members join/leave/promote.
+        // Participants array changed materially — drop the admin index and
+        // refresh metadata in the background. We don't full-invalidate so
+        // concurrent sends keep hitting the (slightly stale) cache rather
+        // than falling through to a cold fetch.
+        this.sock.ev.on('group-participants.update', async (update) => {
+            if (!update?.id) return;
+            try {
+                const { invalidateGroupIndex } = require('../utils/groupAdminIndex');
+                invalidateGroupIndex(this.sock, update.id);
+            } catch (_) { /* index module optional */ }
+            try {
+                const meta = await this.sock.groupMetadata(update.id);
+                if (meta) setCachedGroupMetadata(this.sock, update.id, meta);
+            } catch (_) { /* refetch on next demand */ }
         });
 
         // groups.upsert delivers full metadata payloads for groups the user

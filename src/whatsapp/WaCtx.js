@@ -211,13 +211,28 @@ class WaCtx {
             if (!this.sock || (ws && ws.readyState !== 1)) {
                 await new Promise(r => setTimeout(r, 1500));
             }
-            // Settle grace: server-side device slot finishes registering
-            // ~2s after `connection: 'open'`. Sending earlier hits 428
-            // "Connection Closed" mid-flight. WaConnection stamps
-            // `sock._openedAt` on every open — sleep the remainder.
+            // Keep the watchdog quiet: an outgoing send in progress counts as
+            // activity. Without this, a long send to a 1000-member group
+            // (USync + fanout encrypt) can stretch past the watchdog idle
+            // threshold and trip a false WS restart mid-send.
+            this.sock?._touchEvent?.();
+            // Settle grace: server-side device slot finishes registering and
+            // the libsignal session-recreation storm drains over ~8s after
+            // `connection: 'open'`. Sending earlier hits 428 "Connection
+            // Closed" mid-flight. WaConnection stamps `sock._openedAt` on
+            // every open — sleep the remainder.
             const openedAt = this.sock?._openedAt;
-            if (openedAt && Date.now() - openedAt < 2000) {
-                const wait = 2000 - (Date.now() - openedAt);
+            if (openedAt && Date.now() - openedAt < 8000) {
+                const wait = 8000 - (Date.now() - openedAt);
+                if (wait > 0) await new Promise(r => setTimeout(r, wait));
+            }
+            // Session-storm flag: when a burst of decrypt failures fires
+            // (peers with desynced ratchets after a reconnect), libsignal is
+            // busy recreating sessions and the event loop is CPU-saturated.
+            // Sending mid-storm draws 428 — wait for the flag to expire.
+            const stormUntil = this.sock?._sessionStormUntil;
+            if (stormUntil && Date.now() < stormUntil) {
+                const wait = Math.min(stormUntil - Date.now(), 8000);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }
             try {

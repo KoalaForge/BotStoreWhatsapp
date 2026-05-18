@@ -17,6 +17,8 @@ const META_TTL_MS = 5 * 60_000;
 
 /** @type {Map<string, Map<string, { meta: object, ts: number }>>} */
 const _caches = new Map();
+/** @type {Map<string, Promise<object>>} key = `${botId}:${jid}` */
+const _inflight = new Map();
 
 function _botIdFor(sock) {
     return (sock && sock._botId) || 'single';
@@ -36,9 +38,23 @@ async function groupMetadataCached(sock, jid) {
     const cache = _getCacheFor(sock);
     const entry = cache.get(jid);
     if (entry && (Date.now() - entry.ts) < META_TTL_MS) return entry.meta;
-    const meta = await sock.groupMetadata(jid);
-    cache.set(jid, { meta, ts: Date.now() });
-    return meta;
+
+    // Dedup concurrent cold fetches — N parallel commands in the same group
+    // (or lazy-prewarm racing the cachedGroupMetadata callback) must share a
+    // single server query. Without this, large groups can fire 5+ identical
+    // groupMetadata round-trips back-to-back and trigger rate-limit.
+    const key = `${_botIdFor(sock)}:${jid}`;
+    const pending = _inflight.get(key);
+    if (pending) return pending;
+
+    const fetchP = sock.groupMetadata(jid)
+        .then(meta => {
+            cache.set(jid, { meta, ts: Date.now() });
+            return meta;
+        })
+        .finally(() => _inflight.delete(key));
+    _inflight.set(key, fetchP);
+    return fetchP;
 }
 
 function getCachedGroupMetadata(sock, jid) {
