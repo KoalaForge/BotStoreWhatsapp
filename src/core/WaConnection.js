@@ -108,6 +108,48 @@ class WaConnection extends EventEmitter {
         this._browserProfile = (Array.isArray(browserProfile) && browserProfile.length === 3)
             ? browserProfile
             : BROWSER_PROFILES[Math.floor(Math.random() * BROWSER_PROFILES.length)];
+        // Group metadata cache — avoids USync refetch of 1k-participant lists
+        // on every group send. Invalidated by groups.update / group-participants.update.
+        // LRU-bounded (recent entries kept) + in-flight dedup so concurrent
+        // fetchers collapse to a single USync round-trip.
+        this._groupMetadataCache = new Map();
+        this._groupMetadataTTL = 5 * 60_000;
+        this._groupMetadataMax = 200;
+        this._groupMetadataInflight = new Map();
+    }
+
+    /**
+     * Public cached group metadata accessor.
+     * Used by baileys' cachedGroupMetadata hook AND command handlers so all
+     * paths share one warm entry per group. Throws on hard failure (callers
+     * can wrap with .catch when they want a soft fallback).
+     */
+    async getGroupMetadata(jid) {
+        const entry = this._groupMetadataCache.get(jid);
+        if (entry && Date.now() - entry.at < this._groupMetadataTTL) {
+            // LRU touch — re-insert moves the key to newest.
+            this._groupMetadataCache.delete(jid);
+            this._groupMetadataCache.set(jid, entry);
+            return entry.meta;
+        }
+        const pending = this._groupMetadataInflight.get(jid);
+        if (pending) return pending;
+        const p = (async () => {
+            try {
+                const meta = await this.sock.groupMetadata(jid);
+                this._groupMetadataCache.set(jid, { meta, at: Date.now() });
+                while (this._groupMetadataCache.size > this._groupMetadataMax) {
+                    const oldest = this._groupMetadataCache.keys().next().value;
+                    if (oldest === undefined) break;
+                    this._groupMetadataCache.delete(oldest);
+                }
+                return meta;
+            } finally {
+                this._groupMetadataInflight.delete(jid);
+            }
+        })();
+        this._groupMetadataInflight.set(jid, p);
+        return p;
     }
 
     /**
@@ -476,7 +518,19 @@ class WaConnection extends EventEmitter {
             // burns retry-receipt budget on irrelevant ciphertexts.
             shouldIgnoreJid: (jid) =>
                 jid === 'status@broadcast' || (typeof jid === 'string' && jid.endsWith('@broadcast')),
+            // Serve group metadata from in-memory cache so baileys skips its
+            // USync refetch on every send. Shares one warm entry with command
+            // handlers via getGroupMetadata().
+            cachedGroupMetadata: async (jid) => {
+                try { return await this.getGroupMetadata(jid); }
+                catch (_) { return undefined; }
+            },
         });
+
+        // Expose the cached accessor on the sock so command handlers can
+        // call ctx.sock.getGroupMetadata(jid) without reaching back into
+        // the WaConnection instance.
+        this.sock.getGroupMetadata = (jid) => this.getGroupMetadata(jid);
 
         // -- Connection update events --
         this.sock.ev.on('connection.update', async (update) => {
@@ -699,18 +753,27 @@ class WaConnection extends EventEmitter {
                     raw_message: msg.message || null
                 });
 
-                try {
-                    if (this.onMessage) {
-                        await this.onMessage(this.sock, msg, this.botId);
-                    }
-                } catch (err) {
-                    log('ERROR', `Error handling message for bot ${this.botId}: ${err.message}`);
+                if (this.onMessage) {
+                    // Fire-and-forget — prevents a slow handler (large group
+                    // send, network stall) from blocking sibling messages
+                    // queued in the same upsert batch.
+                    Promise.resolve()
+                        .then(() => this.onMessage(this.sock, msg, this.botId))
+                        .catch(err => log('ERROR', `Error handling message for bot ${this.botId}: ${err.message}`));
                 }
+            }
+        });
+
+        // -- Group metadata cache invalidation --
+        this.sock.ev.on('groups.update', (updates) => {
+            for (const u of updates || []) {
+                if (u?.id) this._groupMetadataCache.delete(u.id);
             }
         });
 
         // -- Group participant join/leave (welcome / goodbye) --
         this.sock.ev.on('group-participants.update', async (update) => {
+            if (update?.id) this._groupMetadataCache.delete(update.id);
             try {
                 await groupGreetingService.handleParticipantUpdate(this.sock, update);
             } catch (err) {
