@@ -3,11 +3,12 @@ const WA_SUFFIX = '@s.whatsapp.net';
 /**
  * Extract phone number from any WhatsApp ID format.
  * "6285155429967@s.whatsapp.net" → "6285155429967"
+ * "6285155429967:25@s.whatsapp.net" → "6285155429967"
  * "6285155429967" → "6285155429967"
  */
 function stripPhone(id) {
     if (!id) return '';
-    return String(id).split('@')[0].trim();
+    return String(id).split('@')[0].split(':')[0].trim();
 }
 
 /**
