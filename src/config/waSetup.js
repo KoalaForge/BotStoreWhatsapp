@@ -2,6 +2,7 @@ const MessageRouter = require('./messageRouter');
 const waBotContextMiddleware = require('../middleware/waBotContext');
 const waContextInjectionMiddleware = require('../middleware/waContextInjection');
 const waBanCheckMiddleware = require('../middleware/waBanCheck');
+const waSpamGuardMiddleware = require('../middleware/waSpamGuard');
 const waGroupFilterMiddleware = require('../middleware/waGroupFilter');
 const waWhitelistCheckMiddleware = require('../middleware/waWhitelistCheck');
 const waAuthMiddleware = require('../middleware/waAuth');
@@ -28,6 +29,11 @@ function setupWhatsApp(botId = null) {
 
     // Check if user is banned
     router.use(waBanCheckMiddleware);
+
+    // Spam guard — drops incoming DM floods before any reply is generated.
+    // Runs after ban check (banned users get their own message) and before
+    // whitelist gate so attackers don't bypass throttle via whitelist requests.
+    router.use(waSpamGuardMiddleware);
 
     // Group filter — drops non-whitelisted commands in groups, routes
     // catalog quote-replies to DM. DM messages pass through unchanged.

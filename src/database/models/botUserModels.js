@@ -28,6 +28,14 @@ const BotUserSchema = new Schema({
         type: String,
         default: null
     },
+    spam_blocked_until: {
+        type: Date,
+        default: null
+    },
+    spam_block_reason: {
+        type: String,
+        default: null
+    },
     // Bot isolation for MULTI mode
     botId: {
         type: String,

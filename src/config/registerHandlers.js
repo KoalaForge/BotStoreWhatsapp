@@ -8,6 +8,7 @@ const delStockState = require('../state/delStockState');
 const profitStockState = require('../state/profitStockState');
 const buyerNotesState = require('../state/buyerNotesState');
 const screenState = require('../state/screenState');
+const menuCooldownState = require('../state/menuCooldownState');
 const transactionService = require('../services/transactionService');
 
 // Top-up preset nominals mapped to number keys 1-4
@@ -196,10 +197,16 @@ function registerHandlers(router) {
     });
 
     // Greeting: "halo", "hai", etc. → product list
-    router.start(command.listProduct);
+    router.start(async (ctx) => {
+        if (!menuCooldownState.shouldSendMenu(ctx.from)) return;
+        menuCooldownState.markMenuSent(ctx.from);
+        await command.listProduct(ctx);
+    });
 
     // Fallback: unrecognized text → product list
     router.onText(async (ctx) => {
+        if (!menuCooldownState.shouldSendMenu(ctx.from)) return;
+        menuCooldownState.markMenuSent(ctx.from);
         await command.listProduct(ctx);
     });
 }

@@ -209,6 +209,27 @@ class BotUserRepository extends BaseRepository {
     // ============================================
 
     /**
+     * Set or clear an auto spam-block on a WhatsApp user.
+     * Passing `untilDate=null` clears the block.
+     * @param {Object} context
+     * @param {string} idWhatsapp - phone-only or full JID (jidQuery normalises)
+     * @param {Date|null} untilDate
+     * @param {string|null} reason
+     */
+    async setSpamBlock(context, idWhatsapp, untilDate, reason = null) {
+        return await this.updateOne(
+            context,
+            jidQuery('idWhatsapp', idWhatsapp),
+            {
+                $set: {
+                    spam_blocked_until: untilDate,
+                    spam_block_reason: untilDate ? reason : null
+                }
+            }
+        );
+    }
+
+    /**
      * Find users by whitelist_status with pagination.
      * Excludes banned users.
      * @param {Object} context
