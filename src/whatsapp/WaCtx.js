@@ -200,9 +200,15 @@ class WaCtx {
      * Non-transient errors (auth, forbidden, message-not-found, validation)
      * propagate immediately — retry would just delay the failure.
      *
+     * maxRetries=1 (2 attempts total). With defaultQueryTimeoutMs=25s the
+     * worst-case wall time is ~55s — well below the 180s pain threshold
+     * users were hitting with the old 3-attempt × 60s timeout combo. A
+     * second consecutive 1k-group USync failure means the WS has bigger
+     * problems; let reconnect + circuit-breaker handle it.
+     *
      * @private
      */
-    async _sendWithRetry(jid, content, options = {}, maxRetries = 2) {
+    async _sendWithRetry(jid, content, options = {}, maxRetries = 1) {
         let lastErr;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             // Pre-flight readiness check: if the socket isn't OPEN, wait a
@@ -216,22 +222,26 @@ class WaCtx {
             // (USync + fanout encrypt) can stretch past the watchdog idle
             // threshold and trip a false WS restart mid-send.
             this.sock?._touchEvent?.();
-            // Settle grace: server-side device slot finishes registering and
-            // the libsignal session-recreation storm drains over ~8s after
-            // `connection: 'open'`. Sending earlier hits 428 "Connection
-            // Closed" mid-flight. WaConnection stamps `sock._openedAt` on
-            // every open — sleep the remainder.
+            // Settle grace: server-side device slot needs ~2s to finish
+            // registering after `connection: 'open'`. Sending earlier can
+            // hit 428 "Connection Closed" mid-flight. WaConnection stamps
+            // `sock._openedAt` on every open — sleep the remainder. Was 8s
+            // historically; that overshoots on healthy networks and stacks
+            // with retry × storm gate to cause multi-minute user hangs.
             const openedAt = this.sock?._openedAt;
-            if (openedAt && Date.now() - openedAt < 8000) {
-                const wait = 8000 - (Date.now() - openedAt);
+            if (openedAt && Date.now() - openedAt < 2000) {
+                const wait = 2000 - (Date.now() - openedAt);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }
             // Session-storm flag: when a burst of decrypt failures fires
             // (peers with desynced ratchets after a reconnect), libsignal is
             // busy recreating sessions and the event loop is CPU-saturated.
             // Sending mid-storm draws 428 — wait for the flag to expire.
+            // GROUP sends only: storm is many-peers libsignal churn, so DM
+            // sends to a single peer can proceed without waiting.
+            const isGroupSend = typeof jid === 'string' && jid.endsWith('@g.us');
             const stormUntil = this.sock?._sessionStormUntil;
-            if (stormUntil && Date.now() < stormUntil) {
+            if (stormUntil && Date.now() < stormUntil && isGroupSend) {
                 const wait = Math.min(stormUntil - Date.now(), 8000);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }

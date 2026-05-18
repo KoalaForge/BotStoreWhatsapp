@@ -605,12 +605,12 @@ class WaConnection extends EventEmitter {
             // tightens recovery from transient WS hiccups.
             keepAliveIntervalMs: 25_000,
             connectTimeoutMs: 60_000,
-            // Drop the explicit defaultQueryTimeoutMs override. Earlier we
-            // bumped 60s → 180s thinking it would "tolerate" slow 1000-member
-            // USync queries; in practice it just delayed user-visible failure
-            // by minutes. Baileys default (60s) + fast retry (below) gives
-            // tighter feedback loop without piling up stuck queries.
-            // defaultQueryTimeoutMs: undefined,
+            // Tighter than Baileys' 60s default. A USync query that hasn't
+            // returned in 25s is wedged behind a session-recreation storm or
+            // dead WS — fail fast so _sendWithRetry's transient-error path
+            // triggers, instead of letting one stuck query block a handler
+            // for a full minute (× retries = multi-minute user-perceived hang).
+            defaultQueryTimeoutMs: 25_000,
             // 250ms (was 2000ms) — matches DSA. Fast retry on transient
             // failures means cold first-send to a large group recovers in
             // sub-second instead of multi-second compounded backoff.
@@ -716,11 +716,6 @@ class WaConnection extends EventEmitter {
             }
 
             if (connection === 'open') {
-                // Capture reconnect-ness BEFORE the reset below — both
-                // _reconnectAttempts and _lastOpenAt get zeroed/restamped a
-                // few lines down, so the storm-gate check below would always
-                // see a "fresh" state without this snapshot.
-                const wasReconnect = this._lastOpenAt > 0 || this._reconnectAttempts > 0;
                 this.isRunning = true;
                 this.startedAt = new Date();
                 this._reconnectAttempts = 0;
@@ -732,19 +727,6 @@ class WaConnection extends EventEmitter {
                 // hits 428 "Connection Closed" while the server-side device
                 // slot finishes settling.
                 if (this.sock) this.sock._openedAt = Date.now();
-                // Reconnect storm gate: the first 20s after a reconnect (not
-                // initial pair), libsignal recreates sessions for peers that
-                // drifted while we were offline — mass closeSession calls
-                // (libsignal session_record.js:268) burn CPU and starve WS
-                // keepalive. _recordDecryptFailure's inbound-driven storm
-                // detection only fires when CIPHERTEXT stubs arrive; on a
-                // quiet 1k-member group it never trips and sends race the
-                // storm → 428 mid-USync. Setting _sessionStormUntil here
-                // makes WaCtx._sendWithRetry honor the gate even without
-                // inbound triggers. Skip on initial pair (no storm yet).
-                if (this.sock && wasReconnect) {
-                    this.sock._sessionStormUntil = Date.now() + 20_000;
-                }
                 this._startWatchdog();
                 log('INFO', `WhatsApp connected: ${this.botId} (${this.phoneNumber})`);
                 this._setState('connected');
