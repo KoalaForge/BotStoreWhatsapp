@@ -95,32 +95,45 @@ async function useMongoAuthState(botId) {
             },
 
             set: async (data) => {
-                // Fire-and-forget Mongo writes. Awaiting Promise.all here
-                // blocks Baileys' relayMessage transaction commit for 1-30s
-                // when 1000 session entries need persistence (1k-member group
-                // send). Filesystem-backed auth states (Digital-Store-Assistant
-                // pattern) don't suffer because file writes are local; ours
-                // hits remote Mongo + AES encryption per entry.
-                //
-                // Trade-off: on hard crash before the writes commit, peer
-                // sessions are lost — Baileys recovers via prekey re-exchange
-                // on next decrypt failure (handled by our purge + circuit
-                // breaker in WaConnection._recordDecryptFailure).
-                const tasks = [];
+                // Single bulkWrite collapses 1000 round-trips into one TCP
+                // exchange. Per-entry updateOne previously saturated the event
+                // loop for 5-30s on a 1k-member group send (1000 AES encrypts +
+                // 1000 Mongo round-trips) → WS keepalive missed → 408 reconnect
+                // cycle. Baileys' addTransactionCapability serializes state.set
+                // per socket (auth-utils.js:103-117), so concurrent same-key
+                // upserts can't race → ordered:false is safe and parallelizes
+                // server-side.
+                const ops = [];
                 for (const category in data) {
                     for (const id in data[category]) {
                         const value = data[category][id];
-                        const key = `${category}-${id}`;
+                        const dataKey = `${category}-${id}`;
                         if (value) {
-                            tasks.push(writeData('keys', key, value));
+                            const serialized = JSON.stringify(value, BufferJSON.replacer);
+                            const encrypted = encryption.encrypt(serialized);
+                            ops.push({
+                                updateOne: {
+                                    filter: { botId, dataType: 'keys', dataKey },
+                                    update: { $set: { data: encrypted } },
+                                    upsert: true,
+                                }
+                            });
                         } else {
-                            tasks.push(removeData('keys', key));
+                            ops.push({
+                                deleteOne: {
+                                    filter: { botId, dataType: 'keys', dataKey }
+                                }
+                            });
                         }
                     }
                 }
-                Promise.all(tasks).catch((err) => {
-                    console.error(clc.red(`[WA Auth] async keys.set failed for bot ${botId}:`), err.message);
-                });
+                if (!ops.length) return;
+                // Chunk at 500 ops — bounds wire packet (~2MB worst-case for
+                // 500 × 4KB encrypted blobs), well under Mongo's 16MB op limit.
+                const CHUNK = 500;
+                for (let i = 0; i < ops.length; i += CHUNK) {
+                    await WaAuthState.bulkWrite(ops.slice(i, i + CHUNK), { ordered: false });
+                }
             }
         }
     };
