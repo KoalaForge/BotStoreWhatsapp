@@ -116,12 +116,14 @@ async function runSingleMode() {
 
         _inflightIncr();
         try {
-            // Humanize: random delay before reading (humans don't read instantly)
-            await humanDelay(400, 1500);
-            await ctx.markRead();
-
-            // Small pause after reading before "thinking" and replying
-            await humanDelay(200, 800);
+            // markRead skipped for groups — it issues a stanza send that
+            // queues behind heavy group ops (1000-member sender-key fanout).
+            // Stripping it lets group commands route immediately, matching
+            // Digital-Store-Assistant's lean architecture which responds fast
+            // in 1000-member groups. DM keeps the read receipt.
+            if (!ctx.isGroup) {
+                await ctx.markRead();
+            }
             await router.route(ctx);
         } catch (err) {
             console.error(
@@ -287,6 +289,11 @@ async function runSingleMode() {
         // needs to drain. Firing sends inside this window reliably draws 428.
         const openedAt = connection.sock._openedAt;
         if (openedAt && Date.now() - openedAt < 10_000) return;
+        // Skip when user-facing handlers are in flight — TX processor would
+        // compete for the same Mongo + sock resources and slow them down. A
+        // heavy reply (e.g. .stok in a 1000-member group) finishes faster
+        // when nothing else is racing for IO.
+        if (_inflight > 0) return;
         txProcessing = true;
 
         // Fresh controller for each tick. If the WS dies during processing,
@@ -400,12 +407,14 @@ async function runMultiMode() {
 
         _inflightIncr();
         try {
-            // Humanize: random delay before reading (humans don't read instantly)
-            await humanDelay(400, 1500);
-            await ctx.markRead();
-
-            // Small pause after reading before "thinking" and replying
-            await humanDelay(200, 800);
+            // markRead skipped for groups — it issues a stanza send that
+            // queues behind heavy group ops (1000-member sender-key fanout).
+            // Stripping it lets group commands route immediately, matching
+            // Digital-Store-Assistant's lean architecture which responds fast
+            // in 1000-member groups. DM keeps the read receipt.
+            if (!ctx.isGroup) {
+                await ctx.markRead();
+            }
             await router.route(ctx);
         } catch (err) {
             console.error(

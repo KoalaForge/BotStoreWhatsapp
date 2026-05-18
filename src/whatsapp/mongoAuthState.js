@@ -95,6 +95,17 @@ async function useMongoAuthState(botId) {
             },
 
             set: async (data) => {
+                // Fire-and-forget Mongo writes. Awaiting Promise.all here
+                // blocks Baileys' relayMessage transaction commit for 1-30s
+                // when 1000 session entries need persistence (1k-member group
+                // send). Filesystem-backed auth states (Digital-Store-Assistant
+                // pattern) don't suffer because file writes are local; ours
+                // hits remote Mongo + AES encryption per entry.
+                //
+                // Trade-off: on hard crash before the writes commit, peer
+                // sessions are lost — Baileys recovers via prekey re-exchange
+                // on next decrypt failure (handled by our purge + circuit
+                // breaker in WaConnection._recordDecryptFailure).
                 const tasks = [];
                 for (const category in data) {
                     for (const id in data[category]) {
@@ -107,7 +118,9 @@ async function useMongoAuthState(botId) {
                         }
                     }
                 }
-                await Promise.all(tasks);
+                Promise.all(tasks).catch((err) => {
+                    console.error(clc.red(`[WA Auth] async keys.set failed for bot ${botId}:`), err.message);
+                });
             }
         }
     };

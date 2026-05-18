@@ -597,16 +597,21 @@ class WaConnection extends EventEmitter {
             // Manual presence update in 'open' handler is a belt-and-braces
             // safety against the rc10 open→408 race seen in issue #2254.
             markOnlineOnConnect: true,
-            keepAliveIntervalMs: 30_000,           // Baileys default
+            // 25s (was 30s) — matches Digital-Store-Assistant which responds
+            // fast in 1000-member groups. Slightly more aggressive keepalive
+            // tightens recovery from transient WS hiccups.
+            keepAliveIntervalMs: 25_000,
             connectTimeoutMs: 60_000,
-            // 180s — USync device-list queries on 1000-member groups can
-            // exceed 90s in practice; the payload (1000 device entries) parses
-            // sync and the server queues behind other heavy operations. A
-            // tighter timeout aborts the send mid-flight which triggers a
-            // reconnect storm. 180s gives a margin without being so high that
-            // genuinely stuck queries hang the bot.
-            defaultQueryTimeoutMs: 180_000,
-            retryRequestDelayMs: 2_000,
+            // Drop the explicit defaultQueryTimeoutMs override. Earlier we
+            // bumped 60s → 180s thinking it would "tolerate" slow 1000-member
+            // USync queries; in practice it just delayed user-visible failure
+            // by minutes. Baileys default (60s) + fast retry (below) gives
+            // tighter feedback loop without piling up stuck queries.
+            // defaultQueryTimeoutMs: undefined,
+            // 250ms (was 2000ms) — matches DSA. Fast retry on transient
+            // failures means cold first-send to a large group recovers in
+            // sub-second instead of multi-second compounded backoff.
+            retryRequestDelayMs: 250,
             // Don't re-emit our own outbound messages back into the upsert
             // handler — saves one decode + filter pass per send. Receivers
             // still see them (server echoes to other devices).
