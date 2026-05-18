@@ -434,7 +434,13 @@ class WaConnection extends EventEmitter {
      * @returns {Promise<void>}
      */
     async start(options = {}) {
-        const { state, saveCreds, clearAll, purgePeerSession } = await useMongoAuthState(this.botId);
+        // Logger shared between useMongoAuthState (signal-store cache) and
+        // makeWASocket so cache-miss/eviction events line up with the same
+        // level the rest of Baileys logs at.
+        const logLevel = process.env.BAILEYS_DEBUG === 'true' ? 'debug' : 'silent';
+        this._logger = pino({ level: logLevel });
+
+        const { state, saveCreds, clearAll, purgePeerSession } = await useMongoAuthState(this.botId, this._logger);
         this._authState = state;
         this._saveCreds = saveCreds;
         this._clearAuth = clearAll;
@@ -464,8 +470,9 @@ class WaConnection extends EventEmitter {
 
         const { version } = await fetchLatestBaileysVersion();
 
-        const logLevel = process.env.BAILEYS_DEBUG === 'true' ? 'debug' : 'silent';
-        const logger = pino({ level: logLevel });
+        // Reuse the logger created in start() so the cached signal store and
+        // the socket emit at the same level.
+        const logger = this._logger || pino({ level: process.env.BAILEYS_DEBUG === 'true' ? 'debug' : 'silent' });
 
         // Fully terminate the previous socket so its WebSocket is closed
         // BEFORE we open a new one. Without this, after a code 515 (restart
@@ -497,10 +504,18 @@ class WaConnection extends EventEmitter {
             // Manual presence update in 'open' handler is a belt-and-braces
             // safety against the rc10 open→408 race seen in issue #2254.
             markOnlineOnConnect: true,
-            keepAliveIntervalMs: 30_000,           // Baileys default
+            // 15s keepalive — community-documented mitigation for the 24h
+            // 428 drift bug (Baileys issue #1625). At 30s the server can
+            // close us during a long encrypt loop even though the WS is
+            // technically alive; 15s recovers headroom on slow networks.
+            keepAliveIntervalMs: 15_000,
             connectTimeoutMs: 60_000,
             defaultQueryTimeoutMs: 60_000,
             retryRequestDelayMs: 2_000,
+            // Headroom for the internal auth-utils.transaction() mutex when
+            // bursts of signal-key writes contend on commit. Default is too
+            // tight for fan-out group sends.
+            transactionOpts: { maxCommitRetries: 10, delayBetweenTriesMs: 10 },
             // getMessage backed by in-memory LRU cache — lets Baileys answer
             // peer retry receipts with the original ciphertext after a socket
             // restart, breaking the "counter drift → Bad MAC" cycle.
@@ -531,6 +546,12 @@ class WaConnection extends EventEmitter {
         // call ctx.sock.getGroupMetadata(jid) without reaching back into
         // the WaConnection instance.
         this.sock.getGroupMetadata = (jid) => this.getGroupMetadata(jid);
+
+        // Health probe used by withRetry + WaCtx so handlers holding a stale
+        // sock reference (captured before a 428/408 reconnect) can bail fast
+        // instead of waiting through retry backoff on a dead WebSocket.
+        const sockRef = this.sock;
+        sockRef.isHealthy = () => sockRef.ws?.readyState === 1;
 
         // -- Connection update events --
         this.sock.ev.on('connection.update', async (update) => {
@@ -603,6 +624,27 @@ class WaConnection extends EventEmitter {
                         this.sock.sendPresenceUpdate('available').catch(() => {});
                     }
                 }, 1_000);
+
+                // Pre-warm group metadata cache so the first group send
+                // doesn't pay the USync cost while holding the auth-utils
+                // transaction mutex (which would starve DMs). One bulk
+                // USync now beats N lazy ones spread across handlers.
+                setTimeout(() => {
+                    if (!this.sock || !this.isRunning) return;
+                    this.sock.groupFetchAllParticipating()
+                        .then((groups) => {
+                            if (!groups) return;
+                            let warmed = 0;
+                            for (const jid of Object.keys(groups)) {
+                                this._groupMetadataCache.set(jid, { meta: groups[jid], at: Date.now() });
+                                warmed++;
+                            }
+                            if (warmed > 0) {
+                                log('INFO', `Bot ${this.botId} pre-warmed metadata for ${warmed} group(s).`);
+                            }
+                        })
+                        .catch(() => { /* non-fatal — cache fills lazily on demand */ });
+                }, 2_000);
 
                 // Start periodic presence simulation (human online/offline pattern)
                 this._startPresenceSimulation();
