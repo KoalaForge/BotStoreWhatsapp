@@ -17,11 +17,17 @@ class OrderService {
      * @param {Object|null} params.resellerOrder - Reseller state data or null for normal orders
      * @returns {Promise<Object>} - { product, variant, effectivePrice, isReseller, markupPerUnit, displayVariantName }
      */
-    async resolveOrderContext(ctx, { productName, variantName, resellerOrder = null, quantity = 1 }) {
+    async resolveOrderContext(ctx, {
+        productName, variantName,
+        productCode = null, variantCode = null,
+        resellerOrder = null, quantity = 1
+    }) {
         const ownerId = ctx.repositoryContext?.ownerId;
 
         if (!resellerOrder) {
-            const result = await this.getProductAndVariant(ctx, productName, variantName);
+            const result = (productCode && variantCode)
+                ? await this.getProductAndVariantByCode(ctx, productCode, variantCode)
+                : await this.getProductAndVariant(ctx, productName, variantName);
             const effectivePrice = await ctx.pricingService.calculatePriceForQty(result.variant, ownerId, quantity);
             const applicableTier = ctx.pricingService.getApplicableTier(result.variant, quantity);
             const nextTier = ctx.pricingService.getNextTier(result.variant, quantity);
@@ -209,6 +215,29 @@ class OrderService {
 
         if (!variant) {
             throw new Error(`Variant "${variantName}" not found for product "${productName}"`);
+        }
+
+        return { product, variant };
+    }
+
+    /**
+     * Get product and variant by codes (preferred — code lookups bypass
+     * fragile name regex matching that breaks when two products share a
+     * variant name, e.g. "HEAD 1 BULAN").
+     */
+    async getProductAndVariantByCode(context, productCode, variantCode) {
+        if (!productCode || !variantCode) {
+            throw new Error('productCode and variantCode are required');
+        }
+
+        const variant = await productVariantRepository.findByCodeVariant(context, variantCode);
+        if (!variant) {
+            throw new Error(`Variant code "${variantCode}" not found`);
+        }
+
+        const product = await productRepository.findByCode(context, productCode);
+        if (!product) {
+            throw new Error(`Product code "${productCode}" not found`);
         }
 
         return { product, variant };

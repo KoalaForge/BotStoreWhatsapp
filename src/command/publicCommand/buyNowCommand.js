@@ -1,5 +1,5 @@
 const actions = require('../../actions');
-const { prepareOrder } = require('../../actions/showPesanan');
+const { prepareOrder, previewStock } = require('../../actions/showPesanan');
 const transactionService = require('../../services/transactionService');
 const {
     replyInGroupWithMention,
@@ -42,6 +42,23 @@ async function buyNowCommand(ctx) {
             return replyInGroupWithMention(
                 ctx,
                 'Anda masih punya transaksi pending. Selesaikan transaksi sebelumnya di DM.'
+            );
+        }
+
+        // Pre-flight stock check — surface "tidak ditemukan" / "stok habis" in
+        // the group itself so the user doesn't get redirected to DM just to read
+        // an error. Side-effect free (no reseller state writes).
+        const preview = await previewStock(ctx, code);
+        if (!preview.found) {
+            return replyInGroupWithMention(ctx, 'Produk tidak ditemukan.');
+        }
+        if (preview.stockCount === 0) {
+            return replyInGroupWithMention(ctx, `Stok *${preview.productName}* habis, tidak bisa melanjutkan.`);
+        }
+        if (qty > preview.stockCount) {
+            return replyInGroupWithMention(
+                ctx,
+                `Stok *${preview.productName}* tidak cukup. Tersedia: ${preview.stockCount} pcs, diminta: ${qty} pcs.`
             );
         }
 

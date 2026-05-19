@@ -208,5 +208,32 @@ async function showPesanan(ctx) {
     }
 }
 
+/**
+ * Lightweight stock preview — resolve variant existence + stock count without
+ * any state mutation (no reseller state writes, no pricing calls). Intended as
+ * a group-side pre-flight so `.buy` / `.buynow` can surface "stok habis" in
+ * the group itself before redirecting the user to DM.
+ *
+ * @returns {Promise<{ found: boolean, stockCount: number, productName: string|null }>}
+ */
+async function previewStock(ctx, variantValue) {
+    const ownVariant = await productVariantRepository.findByCodeVariant(ctx, variantValue);
+    if (ownVariant) {
+        const [product, stockCount] = await Promise.all([
+            productRepository.findByCode(ctx, ownVariant.code),
+            stockRepository.countStock(ctx, variantValue)
+        ]);
+        if (!product) return { found: false, stockCount: 0, productName: null };
+        return { found: true, stockCount, productName: product.name };
+    }
+
+    const result = await resellerService.resolveVariantFromCallback(ctx, variantValue);
+    if (!result) return { found: false, stockCount: 0, productName: null };
+
+    const stockCount = await stockRepository.countPlatformStock(variantValue);
+    return { found: true, stockCount, productName: result.resellerProduct.name };
+}
+
 module.exports = showPesanan;
 module.exports.prepareOrder = prepareOrder;
+module.exports.previewStock = previewStock;

@@ -33,7 +33,19 @@ async function payWithQris(ctx) {
             resellerState.getResellerOrder(userId),
             buyerNotesState.getAppliedNotes(userId)
         ]);
-        const orderCtx = await orderService.resolveOrderContext(ctx, { productName, variantName, resellerOrder, quantity: orderAmount });
+        // Code-first lookup via screenState — prevents variant-name collisions
+        // across products (e.g. multiple products with "HEAD 1 BULAN").
+        const screenEntry = screenState.getScreen(userId);
+        const productCodeFromState = screenEntry?.productCode || null;
+        const variantCodeFromState = screenEntry?.variantCode || null;
+        const orderCtx = await orderService.resolveOrderContext(ctx, {
+            productName,
+            variantName,
+            productCode: productCodeFromState,
+            variantCode: variantCodeFromState,
+            resellerOrder,
+            quantity: orderAmount
+        });
         const { product, variant, effectivePrice, isReseller, markupPerUnit, displayVariantName } = orderCtx;
         isResellerOrder = isReseller;
 

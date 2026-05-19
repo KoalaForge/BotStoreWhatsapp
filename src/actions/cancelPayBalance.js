@@ -28,15 +28,29 @@ async function cancelPayBalance(ctx) {
         const { voucherCode, voucherDiscount, totalPrice } = voucherDetails;
         const saldoEnabled = settings?.saldoEnabled !== false;
 
-        // Get product code for back button
-        const product = await productRepository.findOne(ctx, { name: { $regex: new RegExp('^' + productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') } });
-        const productCode = product ? product.code : null;
+        // Code-first lookup: prefer codes persisted in screenState — name alone
+        // is ambiguous when multiple products share a variant name.
+        const screenEntry = screenState.getScreen(userId);
+        let productCode = screenEntry?.productCode || null;
+        let variantCodeFromState = screenEntry?.variantCode || null;
 
-        // Get variant code for refresh button
-        const variant = await productVariantRepository.findOne(ctx, {
-            name: { $regex: new RegExp('^' + variantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') },
-            code: productCode
-        });
+        if (!productCode && productName) {
+            const product = await productRepository.findOne(ctx, { name: { $regex: new RegExp('^' + productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'i') } });
+            productCode = product ? product.code : null;
+        }
+
+        let variant = null;
+        if (variantCodeFromState) {
+            variant = await productVariantRepository.findByCodeVariant(ctx, variantCodeFromState);
+        } else if (productCode && variantName) {
+            variant = await productVariantRepository.findOne(ctx, {
+                name: { $regex: new RegExp('^' + variantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*$', 'i') },
+                code: productCode
+            });
+        }
+        if (variant && variant.code) {
+            productCode = variant.code;
+        }
         const variantCode = variant ? variant.codeVariant : null;
 
         const data = messageFormatter.formatOrderConfirmation({
