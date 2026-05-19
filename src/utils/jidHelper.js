@@ -18,8 +18,10 @@ function stripPhone(id) {
  */
 function toJid(phone) {
     if (!phone) return '';
-    const str = String(phone).trim();
+    let str = String(phone).trim();
     if (str.includes('@')) return str;
+    str = str.split(':')[0];
+    if (str.startsWith('0')) str = '62' + str.slice(1);
     return str + WA_SUFFIX;
 }
 

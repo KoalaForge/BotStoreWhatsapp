@@ -84,19 +84,22 @@ class WaCtx {
         const key = this._rawMessage.key || {};
         const remote = key.remoteJid || '';
 
-        // Group: sender is in `participant`. Prefer participantAlt for @lid.
+        // Group: sender is in `participant`. Prefer participantAlt (v7+) or
+        // participantPn (v6.7) when participant is @lid to resolve phone JID.
         if (remote.endsWith('@g.us')) {
             const part = key.participant || '';
-            if (part.endsWith('@lid') && key.participantAlt) {
-                return String(key.participantAlt).split('@')[0];
+            if (part.endsWith('@lid')) {
+                if (key.participantAlt) return String(key.participantAlt).split('@')[0].split(':')[0];
+                if (key.participantPn)  return String(key.participantPn).split('@')[0].split(':')[0];
             }
-            return part.split('@')[0];
+            return part.split('@')[0].split(':')[0];
         }
 
-        if (remote.endsWith('@lid') && key.remoteJidAlt) {
-            return String(key.remoteJidAlt).split('@')[0];
+        if (remote.endsWith('@lid')) {
+            if (key.remoteJidAlt) return String(key.remoteJidAlt).split('@')[0].split(':')[0];
+            if (key.senderPn)     return String(key.senderPn).split('@')[0].split(':')[0];
         }
-        return remote.split('@')[0];
+        return remote.split('@')[0].split(':')[0];
     }
 
     /** Chat JID — full JID needed by sock.sendMessage() */

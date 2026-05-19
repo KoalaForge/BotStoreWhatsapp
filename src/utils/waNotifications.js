@@ -13,26 +13,27 @@ const { toJid } = require('./jidHelper');
  * @returns {Promise<Array<string>>} - Array of WhatsApp JIDs
  */
 const getNotificationIds = async (botId = null) => {
-    // 1. Try admin WhatsApp JIDs from AdminRepository
+    const set = new Set();
+
     try {
         const context = botId ? { botId } : {};
         const admins = await adminRepository.find(context, {});
-        if (admins && admins.length > 0) {
-            const jids = admins
-                .map(admin => toJid(admin.idWhatsapp))
-                .filter(jid => jid && jid.trim());
-            if (jids.length > 0) return jids;
+        for (const a of admins || []) {
+            const jid = toJid(a.idWhatsapp);
+            if (jid && jid.trim()) set.add(jid);
         }
     } catch (error) {
         console.error('Failed to get admin WhatsApp JIDs for notifications:', error.message);
     }
 
-    // 2. Fallback to environment variable
     if (process.env.NOTIFICATION_WHATSAPP_ID) {
-        return process.env.NOTIFICATION_WHATSAPP_ID.split(',').map(id => toJid(id)).filter(Boolean);
+        for (const raw of process.env.NOTIFICATION_WHATSAPP_ID.split(',')) {
+            const jid = toJid(raw.trim());
+            if (jid) set.add(jid);
+        }
     }
 
-    return [];
+    return Array.from(set);
 };
 
 /**

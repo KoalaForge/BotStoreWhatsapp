@@ -4,7 +4,7 @@ const { Schema } = mongoose;
 const AdminSchema = new Schema({
     idTelegram: {
         type: String,
-        required: true,
+        required: false,
     },
     idWhatsapp: {
         type: String,
