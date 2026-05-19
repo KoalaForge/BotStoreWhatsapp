@@ -338,13 +338,17 @@ class WaCtx {
         // Auto-quote trigger message in groups so the requesting user gets
         // a push notification for the bot's reply. Explicit `quoted` from
         // caller wins; `noQuote: true` opt-out mirrors `noMention`.
+        // Baileys reads `quoted` from the 3rd-arg options of sock.sendMessage,
+        // NOT from content — must split it out before spreading sendOpts.
         if (this.isGroup && !sendOpts.quoted && !sendOpts.noQuote) {
             sendOpts.quoted = this._rawMessage;
         }
         delete sendOpts.noMention;
         delete sendOpts.noQuote;
+        const { quoted: quotedOpt, ...contentOpts } = sendOpts;
+        const sockOpts = quotedOpt ? { quoted: quotedOpt } : {};
 
-        return this._sendWithRetry(this.chat, { text: body, ...sendOpts });
+        return this._sendWithRetry(this.chat, { text: body, ...contentOpts }, sockOpts);
     }
 
     /**
@@ -424,18 +428,21 @@ class WaCtx {
             }
         }
         // Auto-quote trigger message in groups — same rule as reply().
+        // Baileys reads `quoted` from 3rd-arg options, not content; split out.
         if (this.isGroup && !sendOpts.quoted && !sendOpts.noQuote) {
             sendOpts.quoted = this._rawMessage;
         }
         delete sendOpts.noMention;
         delete sendOpts.noQuote;
+        const { quoted: quotedOpt, ...contentOpts } = sendOpts;
+        const sockOpts = quotedOpt ? { quoted: quotedOpt } : {};
 
         const content = {
             image: Buffer.isBuffer(image) ? image : { url: image },
             caption: finalCaption,
-            ...sendOpts
+            ...contentOpts
         };
-        return this._sendWithRetry(this.chat, content);
+        return this._sendWithRetry(this.chat, content, sockOpts);
     }
 
     /**
