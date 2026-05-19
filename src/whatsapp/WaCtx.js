@@ -316,7 +316,28 @@ class WaCtx {
      */
     async reply(text, options = {}) {
         await this._humanize(text.length, options);
-        return this._sendWithRetry(this.chat, { text, ...options });
+
+        let body = text;
+        const sendOpts = { ...options };
+
+        // Auto-mention the trigger user in group context. Skip when caller
+        // already passed a mentions[] (explicit override) or noMention: true.
+        // mentions[] entry + `@<phone>` body token both derived from
+        // key.participant so the chip binds in both phone-mode and LID-mode
+        // groups. Cloned-DM ctx has isGroup=false (via _chatOverride) so DM
+        // flows are unaffected.
+        if (this.isGroup && !sendOpts.mentions && !sendOpts.noMention) {
+            const key = this._rawMessage?.key || {};
+            const senderJid = key.participant || this.jid;
+            if (senderJid) {
+                const phone = String(senderJid).split('@')[0].split(':')[0];
+                body = `@${phone} ${text}`;
+                sendOpts.mentions = [senderJid];
+            }
+        }
+        delete sendOpts.noMention;
+
+        return this._sendWithRetry(this.chat, { text: body, ...sendOpts });
     }
 
     /**
@@ -382,10 +403,25 @@ class WaCtx {
     async sendImage(image, caption, options = {}) {
         await this._humanize((caption || '').length, options);
 
+        let finalCaption = caption || '';
+        const sendOpts = { ...options };
+
+        // Auto-mention in group context — same rule as reply().
+        if (this.isGroup && !sendOpts.mentions && !sendOpts.noMention) {
+            const key = this._rawMessage?.key || {};
+            const senderJid = key.participant || this.jid;
+            if (senderJid) {
+                const phone = String(senderJid).split('@')[0].split(':')[0];
+                finalCaption = finalCaption ? `@${phone} ${finalCaption}` : `@${phone}`;
+                sendOpts.mentions = [senderJid];
+            }
+        }
+        delete sendOpts.noMention;
+
         const content = {
             image: Buffer.isBuffer(image) ? image : { url: image },
-            caption: caption || '',
-            ...options
+            caption: finalCaption,
+            ...sendOpts
         };
         return this._sendWithRetry(this.chat, content);
     }

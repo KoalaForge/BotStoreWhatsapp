@@ -10,13 +10,19 @@ const { getBotPhone } = require('./jidHelper');
  * @returns {Promise<Object>} Baileys sendMessage result
  */
 async function replyInGroupWithMention(ctx, text) {
-    const userJid = ctx.jid;
-    const mentionTag = `@${ctx.from}`;
+    // Use key.participant — canonical sender JID in the group's addressing
+    // mode. In LID-mode groups this is `xxx@lid`, in phone-mode it's the
+    // `@s.whatsapp.net` form. Both the mentions[] entry and the `@<phone>`
+    // body token MUST come from this same JID, otherwise WhatsApp won't
+    // bind the chip and the token renders as raw text.
+    const key = ctx.rawMessage?.key || {};
+    const senderJid = key.participant || ctx.jid;
+    const phone = String(senderJid).split('@')[0].split(':')[0];
     return ctx.sock.sendMessage(
         ctx.chat,
         {
-            text: `${mentionTag} ${text}`,
-            mentions: [userJid]
+            text: `@${phone} ${text}`,
+            mentions: [senderJid]
         },
         { quoted: ctx.rawMessage }
     );
