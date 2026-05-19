@@ -12,9 +12,13 @@ const isAdmin = async (id, ctx = null) => {
     const candidates = [
         id,
         key.remoteJid,
-        key.remoteJidAlt,
+        key.remoteJidAlt,      // baileys v7+
         key.participant,
-        key.participantAlt,
+        key.participantAlt,    // baileys v7+
+        key.senderPn,          // baileys v6.7+ — phone JID of LID-routed sender
+        key.senderLid,         // baileys v6.7+ — sender LID JID
+        key.participantPn,     // baileys v6.7+ — group sender phone JID
+        key.participantLid,    // baileys v6.7+ — group sender LID JID
     ]
         .filter(Boolean)
         .map(v => String(v).trim())
