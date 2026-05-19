@@ -335,7 +335,14 @@ class WaCtx {
                 sendOpts.mentions = [senderJid];
             }
         }
+        // Auto-quote trigger message in groups so the requesting user gets
+        // a push notification for the bot's reply. Explicit `quoted` from
+        // caller wins; `noQuote: true` opt-out mirrors `noMention`.
+        if (this.isGroup && !sendOpts.quoted && !sendOpts.noQuote) {
+            sendOpts.quoted = this._rawMessage;
+        }
         delete sendOpts.noMention;
+        delete sendOpts.noQuote;
 
         return this._sendWithRetry(this.chat, { text: body, ...sendOpts });
     }
@@ -416,7 +423,12 @@ class WaCtx {
                 sendOpts.mentions = [senderJid];
             }
         }
+        // Auto-quote trigger message in groups — same rule as reply().
+        if (this.isGroup && !sendOpts.quoted && !sendOpts.noQuote) {
+            sendOpts.quoted = this._rawMessage;
+        }
         delete sendOpts.noMention;
+        delete sendOpts.noQuote;
 
         const content = {
             image: Buffer.isBuffer(image) ? image : { url: image },

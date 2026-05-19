@@ -62,8 +62,16 @@ const listProduct = async (ctx) => {
         const banner = resolveBanner(setting);
         const csLine = buildCSInline(setting?.csLinks);
 
+        // Derive mention phone + JID from a single source so the @token in
+        // the welcome line matches the JID in mentions[] exactly. Mirrors
+        // WaCtx.reply()'s auto-mention logic — required for chip render in
+        // @lid-mode groups where ctx.from and ctx.jid can diverge.
+        const msgKey = ctx.rawMessage?.key || {};
+        const senderJid = msgKey.participant || ctx.jid;
+        const mentionPhone = String(senderJid).split('@')[0].split(':')[0];
+
         const lines = [];
-        lines.push(renderWelcomeHeader(ctx.from, companyName, greeting));
+        lines.push(renderWelcomeHeader(mentionPhone, companyName, greeting));
         lines.push('');
         lines.push(renderPanduanBlock(ctx.isGroup));
         lines.push('');
@@ -102,7 +110,7 @@ const listProduct = async (ctx) => {
 
         screenState.setScreen(jid, 'PRODUCT_LIST', {});
 
-        const sentMsg = await sendWithBanner(ctx, lines.join('\n'), banner, { mentions: [ctx.jid] });
+        const sentMsg = await sendWithBanner(ctx, lines.join('\n'), banner, { mentions: [senderJid] });
 
         // In groups, cache the catalog message's stanzaId so the user can quote-
         // reply with a number to get variant details delivered to their DM.
