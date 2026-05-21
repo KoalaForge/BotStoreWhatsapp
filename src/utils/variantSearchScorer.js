@@ -1,11 +1,14 @@
 const levenshtein = require('./levenshtein');
 
+const FUZZY_MIN_QUERY_LENGTH = 4;
+
 function scoreVariant(query, variant) {
     const q = String(query || '').toLowerCase().trim();
     if (!q) return 0;
 
     const code = String(variant.codeVariant || '').toLowerCase();
     const name = String(variant.name || '').toLowerCase();
+    const productName = String(variant.productName || '').toLowerCase();
     let score = 0;
 
     if (code === q) {
@@ -16,20 +19,28 @@ function scoreVariant(query, variant) {
         score += 300;
     }
 
+    if (productName.startsWith(q)) {
+        score += 250;
+    } else if (productName.includes(q)) {
+        score += 200;
+    }
+
     if (name.startsWith(q)) {
         score += 200;
     } else if (name.includes(q)) {
         score += 150;
     }
 
-    if (score === 0) {
+    if (score === 0 && q.length >= FUZZY_MIN_QUERY_LENGTH) {
         const threshold = Math.min(3, Math.floor(q.length / 2));
         if (threshold > 0) {
             const codePrefix = code.slice(0, q.length);
             const namePrefix = name.slice(0, q.length);
+            const productPrefix = productName.slice(0, q.length);
             const dist = Math.min(
                 levenshtein(q, codePrefix),
-                levenshtein(q, namePrefix)
+                levenshtein(q, namePrefix),
+                productPrefix ? levenshtein(q, productPrefix) : Infinity
             );
             if (dist <= threshold) {
                 score = Math.max(10, 100 - dist * 30);
