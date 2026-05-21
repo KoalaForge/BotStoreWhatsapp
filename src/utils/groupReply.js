@@ -79,7 +79,11 @@ async function sendGroupAck(sock, { groupJid, senderJid, senderPhone, messageId,
             message: { conversation: '' }
         };
     }
-    const body = senderPhone ? `@${senderPhone} ${text}` : text;
+    // Mention token MUST come from senderJid prefix — `@<phone>` won't bind in
+    // LID-mode groups where senderJid is `xxx@lid` (xxx != real phone).
+    const tokenFromJid = senderJid ? String(senderJid).split('@')[0].split(':')[0] : null;
+    const token = tokenFromJid || senderPhone || null;
+    const body = token ? `@${token} ${text}` : text;
     return sock.sendMessage(
         groupJid,
         {
