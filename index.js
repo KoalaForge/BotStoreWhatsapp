@@ -101,13 +101,16 @@ async function runSingleMode() {
     const handleMessage = async (sock, msg, botId) => {
         const ctx = new WaCtx(sock, msg, botId);
 
-        // Early filter: in groups, only pay handler cost for dot-commands or
-        // numeric quote-replies (catalog picker). Drops chatter from large
-        // groups before humanDelay/markRead saturate the event loop and
-        // cause WS keepalive misses (408 timeouts).
+        // Early filter: in groups, drop only short noise (<4 chars) that
+        // can't be dot-command nor numeric pick nor auto-suggest candidate.
+        // Plain text ≥4 char passes so waGroupFilter can fire auto-suggest
+        // (fire-and-forget, no command routing happens for plain text).
         if (ctx.isGroup) {
             const text = (ctx.message || '').trim();
-            if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
+            const isDotCmd = text.startsWith('.');
+            const isNumericPick = /^\d+$/.test(text);
+            const isAutoSuggestCandidate = text.length >= 4;
+            if (!isDotCmd && !isNumericPick && !isAutoSuggestCandidate) return;
             // Lazy prewarm: kick metadata fetch off the critical path so the
             // eventual reply send hits the cache. Cheap when warm (sync map
             // read); fire-and-forget when cold.
@@ -392,13 +395,16 @@ async function runMultiMode() {
 
         const ctx = new WaCtx(sock, msg, botId);
 
-        // Early filter: in groups, only pay handler cost for dot-commands or
-        // numeric quote-replies (catalog picker). Drops chatter from large
-        // groups before humanDelay/markRead saturate the event loop and
-        // cause WS keepalive misses (408 timeouts).
+        // Early filter: in groups, drop only short noise (<4 chars) that
+        // can't be dot-command nor numeric pick nor auto-suggest candidate.
+        // Plain text ≥4 char passes so waGroupFilter can fire auto-suggest
+        // (fire-and-forget, no command routing happens for plain text).
         if (ctx.isGroup) {
             const text = (ctx.message || '').trim();
-            if (!text.startsWith('.') && !/^\d+$/.test(text)) return;
+            const isDotCmd = text.startsWith('.');
+            const isNumericPick = /^\d+$/.test(text);
+            const isAutoSuggestCandidate = text.length >= 4;
+            if (!isDotCmd && !isNumericPick && !isAutoSuggestCandidate) return;
             // Lazy prewarm: kick metadata fetch off the critical path so the
             // eventual reply send hits the cache. Cheap when warm (sync map
             // read); fire-and-forget when cold.

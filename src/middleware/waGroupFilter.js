@@ -54,9 +54,17 @@ function extractQuotedStanzaId(rawMessage) {
  * DM messages pass through unchanged.
  */
 const waGroupFilterMiddleware = async (ctx, next) => {
+    console.log('[ AUTOSUGGEST ] groupFilter entry', {
+        isGroup: ctx.isGroup,
+        chat: ctx.chat,
+        msgType: ctx.messageType,
+        rawMessage: !!ctx.message,
+        textPreview: String(ctx.message || '').slice(0, 60)
+    });
     if (!ctx.isGroup) return next();
 
     const text = (ctx.message || '').trim();
+    console.log('[ AUTOSUGGEST ] groupFilter text', { text: text.slice(0, 60), length: text.length, startsWithDot: text.startsWith('.') });
 
     // 1. Quote-reply to a cached `.list` message with a numeric pick.
     if (/^\d+$/.test(text)) {
