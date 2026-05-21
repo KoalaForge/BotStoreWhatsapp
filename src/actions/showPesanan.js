@@ -13,6 +13,8 @@ const screenState = require('../state/screenState');
 const moment = require('moment-timezone');
 const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
 const { resolveBanner, sendWithBanner } = require('../utils/bannerResolver');
+const variantSearchService = require('../services/variantSearchService');
+const { formatNotFoundReply } = require('../utils/notFoundReply');
 
 /**
  * Resolve variant context for both normal and reseller products.
@@ -109,14 +111,16 @@ async function prepareOrder(ctx, quantity = 1) {
 
     const variantContext = await resolveVariantContext(ctx, variantValue, orderQuantity);
     if (!variantContext) {
-        await ctx.reply('Produk tidak ditemukan.');
+        const suggestions = await variantSearchService.findSimilar(ctx, variantValue, 5);
+        await ctx.reply(formatNotFoundReply(suggestions));
         return null;
     }
 
     const { variant, product, effectivePrice, stockCount, displayVariantName, isReseller, markupPerUnit, applicableTier, nextTier } = variantContext;
 
     if (!product) {
-        await ctx.reply('Produk tidak ditemukan.');
+        const suggestions = await variantSearchService.findSimilar(ctx, variantValue, 5);
+        await ctx.reply(formatNotFoundReply(suggestions));
         return null;
     }
 
@@ -223,15 +227,21 @@ async function previewStock(ctx, variantValue) {
             productRepository.findByCode(ctx, ownVariant.code),
             stockRepository.countStock(ctx, variantValue)
         ]);
-        if (!product) return { found: false, stockCount: 0, productName: null };
-        return { found: true, stockCount, productName: product.name };
+        if (!product) {
+            const suggestions = await variantSearchService.findSimilar(ctx, variantValue, 5);
+            return { found: false, stockCount: 0, productName: null, suggestions };
+        }
+        return { found: true, stockCount, productName: product.name, suggestions: [] };
     }
 
     const result = await resellerService.resolveVariantFromCallback(ctx, variantValue);
-    if (!result) return { found: false, stockCount: 0, productName: null };
+    if (!result) {
+        const suggestions = await variantSearchService.findSimilar(ctx, variantValue, 5);
+        return { found: false, stockCount: 0, productName: null, suggestions };
+    }
 
     const stockCount = await stockRepository.countPlatformStock(variantValue);
-    return { found: true, stockCount, productName: result.resellerProduct.name };
+    return { found: true, stockCount, productName: result.resellerProduct.name, suggestions: [] };
 }
 
 module.exports = showPesanan;

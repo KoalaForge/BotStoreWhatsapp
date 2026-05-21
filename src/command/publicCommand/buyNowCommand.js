@@ -6,6 +6,7 @@ const {
     buildProcessingLine,
     buildReadyLine
 } = require('../../utils/groupReply');
+const { formatNotFoundReply } = require('../../utils/notFoundReply');
 
 const USAGE = '*Format Pembelian (Saldo)*\n\n' +
     '`.buynow <kode> <jumlah>`\n\n' +
@@ -50,7 +51,7 @@ async function buyNowCommand(ctx) {
         // an error. Side-effect free (no reseller state writes).
         const preview = await previewStock(ctx, code);
         if (!preview.found) {
-            return replyInGroupWithMention(ctx, 'Produk tidak ditemukan.');
+            return replyInGroupWithMention(ctx, formatNotFoundReply(preview.suggestions));
         }
         if (preview.stockCount === 0) {
             return replyInGroupWithMention(ctx, `Stok *${preview.productName}* habis, tidak bisa melanjutkan.`);

@@ -1,6 +1,8 @@
 const BaseRepository = require('./BaseRepository');
 const ProductVariantModel = require('../database/models/productsVariantModels');
 const IsolationStrategy = require('./IsolationStrategy');
+const variantSearchCache = require('../state/variantSearchCache');
+const modeService = require('../services/modeService');
 
 /**
  * Product Variant Repository
@@ -19,6 +21,28 @@ class ProductVariantRepository extends BaseRepository {
         super(ProductVariantModel, IsolationStrategy.OwnerScoped, {
             caseInsensitiveFields: ['codeVariant']
         });
+    }
+
+    _invalidateSearchCache(context) {
+        try {
+            if (modeService.isSingleMode()) {
+                variantSearchCache.invalidate('__single__');
+                return;
+            }
+            const ownerId = context?.repositoryContext?.ownerId
+                || context?.state?.ownerId
+                || context?.ownerId
+                || null;
+            variantSearchCache.invalidate(ownerId ? `owner:${ownerId}` : null);
+        } catch (_) {
+            variantSearchCache.invalidate(null);
+        }
+    }
+
+    async create(ctxOrContext, data) {
+        const result = await super.create(ctxOrContext, data);
+        this._invalidateSearchCache(ctxOrContext);
+        return result;
     }
 
     /**
@@ -78,7 +102,9 @@ class ProductVariantRepository extends BaseRepository {
      * @returns {Promise<Object>} - Update result
      */
     async updatePrice(context, codeVariant, price) {
-        return await this.updateOne(context, { codeVariant }, { $set: { price } });
+        const result = await this.updateOne(context, { codeVariant }, { $set: { price } });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     /**
@@ -89,7 +115,9 @@ class ProductVariantRepository extends BaseRepository {
      * @returns {Promise<Object>} - Update result
      */
     async setActiveStatus(context, codeVariant, isActive) {
-        return await this.updateOne(context, { codeVariant }, { $set: { isActive } });
+        const result = await this.updateOne(context, { codeVariant }, { $set: { isActive } });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     /**
@@ -119,7 +147,9 @@ class ProductVariantRepository extends BaseRepository {
      * @returns {Promise<Object>} - Delete result
      */
     async deleteVariant(context, codeVariant) {
-        return await this.deleteOne(context, { codeVariant });
+        const result = await this.deleteOne(context, { codeVariant });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     /**
@@ -129,7 +159,9 @@ class ProductVariantRepository extends BaseRepository {
      * @returns {Promise<Object>} - Delete result
      */
     async deleteVariantsByProduct(context, productCode) {
-        return await this.deleteMany(context, { code: productCode });
+        const result = await this.deleteMany(context, { code: productCode });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     /**
@@ -140,7 +172,9 @@ class ProductVariantRepository extends BaseRepository {
      * @returns {Promise<Object>} - Update result
      */
     async updateProductCodeForVariants(context, oldCode, newCode) {
-        return await this.updateMany(context, { code: oldCode }, { $set: { code: newCode } });
+        const result = await this.updateMany(context, { code: oldCode }, { $set: { code: newCode } });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     /**
@@ -198,7 +232,9 @@ class ProductVariantRepository extends BaseRepository {
      * @returns {Promise<Object>} - updateResult
      */
     async setCyclable(context, codeVariant, isCyclable) {
-        return await this.updateOne(context, { codeVariant }, { $set: { is_cyclable: isCyclable } });
+        const result = await this.updateOne(context, { codeVariant }, { $set: { is_cyclable: isCyclable } });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     /**
@@ -209,22 +245,30 @@ class ProductVariantRepository extends BaseRepository {
      * @returns {Promise<Object>} - updateResult
      */
     async setDuration(context, codeVariant, durationDays) {
-        return await this.updateOne(context, { codeVariant }, { $set: { duration_days: durationDays } });
+        const result = await this.updateOne(context, { codeVariant }, { $set: { duration_days: durationDays } });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     async addTierPricing(context, codeVariant, minQty, price) {
         await this.updateOne(context, { codeVariant }, { $pull: { tier_pricing: { min_qty: minQty } } });
-        return this.updateOne(context, { codeVariant }, {
+        const result = await this.updateOne(context, { codeVariant }, {
             $push: { tier_pricing: { $each: [{ min_qty: minQty, price }], $sort: { min_qty: 1 } } }
         });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     async removeTierPricing(context, codeVariant, minQty) {
-        return this.updateOne(context, { codeVariant }, { $pull: { tier_pricing: { min_qty: minQty } } });
+        const result = await this.updateOne(context, { codeVariant }, { $pull: { tier_pricing: { min_qty: minQty } } });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     async clearTierPricing(context, codeVariant) {
-        return this.updateOne(context, { codeVariant }, { $set: { tier_pricing: [] } });
+        const result = await this.updateOne(context, { codeVariant }, { $set: { tier_pricing: [] } });
+        this._invalidateSearchCache(context);
+        return result;
     }
 
     /**
