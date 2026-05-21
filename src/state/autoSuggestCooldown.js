@@ -1,13 +1,13 @@
 const TTL_MS = 5 * 60 * 1000;
 const cooldown = new Map();
 
-function _key(userJid, keyword) {
-    return `${userJid}::${String(keyword || '').toLowerCase()}`;
+function _key(groupJid, userJid, keyword) {
+    return `${groupJid}::${userJid}::${String(keyword || '').toLowerCase()}`;
 }
 
-function canTrigger(userJid, keyword) {
-    if (!userJid || !keyword) return false;
-    const k = _key(userJid, keyword);
+function canTrigger(groupJid, userJid, keyword) {
+    if (!groupJid || !userJid || !keyword) return false;
+    const k = _key(groupJid, userJid, keyword);
     const ts = cooldown.get(k);
     if (!ts) return true;
     if (Date.now() - ts > TTL_MS) {
@@ -17,9 +17,9 @@ function canTrigger(userJid, keyword) {
     return false;
 }
 
-function markTriggered(userJid, keyword) {
-    if (!userJid || !keyword) return;
-    cooldown.set(_key(userJid, keyword), Date.now());
+function markTriggered(groupJid, userJid, keyword) {
+    if (!groupJid || !userJid || !keyword) return;
+    cooldown.set(_key(groupJid, userJid, keyword), Date.now());
 }
 
 function clear() {

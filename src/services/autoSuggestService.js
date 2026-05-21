@@ -126,8 +126,8 @@ async function maybeReply(ctx, text) {
             : null);
         if (!intent) return;
 
-        const canTrigger = autoSuggestCooldown.canTrigger(senderJid, intent.primaryKeyword);
-        console.log('[ AUTOSUGGEST ] cooldown.canTrigger', canTrigger, 'key=', `${senderJid}::${intent.primaryKeyword}`);
+        const canTrigger = autoSuggestCooldown.canTrigger(groupJid, senderJid, intent.primaryKeyword);
+        console.log('[ AUTOSUGGEST ] cooldown.canTrigger', canTrigger, 'key=', `${groupJid}::${senderJid}::${intent.primaryKeyword}`);
         if (!canTrigger) return;
 
         const enriched = await variantSearchService.enrichPrices(ctx, intent.variants);
@@ -149,7 +149,7 @@ async function maybeReply(ctx, text) {
         });
         console.log('[ AUTOSUGGEST ] reply sent');
 
-        autoSuggestCooldown.markTriggered(senderJid, intent.primaryKeyword);
+        autoSuggestCooldown.markTriggered(groupJid, senderJid, intent.primaryKeyword);
     } catch (err) {
         const clc = require('cli-color');
         const moment = require('moment-timezone');
