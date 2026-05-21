@@ -109,7 +109,7 @@ async function runSingleMode() {
             const text = (ctx.message || '').trim();
             const isDotCmd = text.startsWith('.');
             const isNumericPick = /^\d+$/.test(text);
-            const isAutoSuggestCandidate = text.length >= 4;
+            const isAutoSuggestCandidate = text.length >= 2;
             if (!isDotCmd && !isNumericPick && !isAutoSuggestCandidate) return;
             // Lazy prewarm: kick metadata fetch off the critical path so the
             // eventual reply send hits the cache. Cheap when warm (sync map
@@ -403,7 +403,7 @@ async function runMultiMode() {
             const text = (ctx.message || '').trim();
             const isDotCmd = text.startsWith('.');
             const isNumericPick = /^\d+$/.test(text);
-            const isAutoSuggestCandidate = text.length >= 4;
+            const isAutoSuggestCandidate = text.length >= 2;
             if (!isDotCmd && !isNumericPick && !isAutoSuggestCandidate) return;
             // Lazy prewarm: kick metadata fetch off the critical path so the
             // eventual reply send hits the cache. Cheap when warm (sync map

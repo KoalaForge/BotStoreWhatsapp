@@ -98,6 +98,31 @@ async function enrichPrices(ctx, variants) {
     }));
 }
 
+async function findExactMatch(ctx, normalizedText) {
+    if (!normalizedText) return [];
+
+    const key = _cacheKey(ctx);
+    let variants = variantSearchCache.get(key);
+    if (!variants) variants = await _loadCache(ctx, key);
+
+    const matches = [];
+    const seen = new Set();
+    for (const v of variants) {
+        const code = String(v.codeVariant || '').toLowerCase();
+        const name = String(v.name || '').toLowerCase();
+        const pName = String(v.productName || '').toLowerCase();
+        if (normalizedText === code
+            || normalizedText === name
+            || normalizedText === pName) {
+            if (!seen.has(v.codeVariant)) {
+                seen.add(v.codeVariant);
+                matches.push(v);
+            }
+        }
+    }
+    return matches;
+}
+
 function invalidate(ctx) {
     const key = _cacheKey(ctx);
     variantSearchCache.invalidate(key);
@@ -107,4 +132,4 @@ function invalidateAll() {
     variantSearchCache.invalidate(null);
 }
 
-module.exports = { findSimilar, findSimilarScored, enrichPrices, invalidate, invalidateAll };
+module.exports = { findSimilar, findSimilarScored, findExactMatch, enrichPrices, invalidate, invalidateAll };
