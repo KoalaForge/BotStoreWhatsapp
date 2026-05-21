@@ -73,7 +73,9 @@ const waGroupFilterMiddleware = async (ctx, next) => {
     // 2. Plain text — try auto-suggest before silent drop.
     if (!text.startsWith('.')) {
         if (text.length >= 4) {
-            autoSuggestService.maybeReply(ctx, text).catch(() => {});
+            autoSuggestService.maybeReply(ctx, text).catch(err => {
+                console.log('[ AUTOSUGGEST ] middleware catch', err.message);
+            });
         }
         return; // silent ignore for command routing
     }

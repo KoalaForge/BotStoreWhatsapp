@@ -27,6 +27,7 @@ function _tokenize(text) {
 
 async function detectIntent(ctx, text) {
     const tokens = _tokenize(text);
+    console.log('[ AUTOSUGGEST ] tokens', tokens);
     if (tokens.length === 0) return null;
 
     const aggregate = new Map();
@@ -35,9 +36,15 @@ async function detectIntent(ctx, text) {
         let hits;
         try {
             hits = await variantSearchService.findSimilarScored(ctx, token, PER_TOKEN_SCAN_LIMIT);
-        } catch (_) {
+        } catch (err) {
+            console.log('[ AUTOSUGGEST ] findSimilarScored error', token, err.message);
             continue;
         }
+        console.log('[ AUTOSUGGEST ] hits', {
+            token,
+            count: hits.length,
+            top: hits.slice(0, 3).map(h => ({ code: h.variant.codeVariant, score: h.score }))
+        });
         for (const { variant, score } of hits) {
             if (score < MIN_SCORE_THRESHOLD) continue;
             const key = variant.codeVariant;
@@ -72,31 +79,61 @@ async function maybeReply(ctx, text) {
     try {
         if (!ctx.isGroup) return;
 
+        console.log('[ AUTOSUGGEST ] enter', {
+            chat: ctx.chat,
+            text: String(text || '').slice(0, 80),
+            hasRepoCtx: !!ctx.repositoryContext,
+            ownerId: ctx.repositoryContext?.ownerId,
+            botId: ctx.state?.botId,
+            mode: ctx.repositoryContext?.mode
+        });
+
+        if (!ctx.repositoryContext) {
+            console.log('[ AUTOSUGGEST ] skip: repositoryContext null (botContext/contextInjection middleware gagal)');
+            return;
+        }
+
         const groupJid = ctx.chat;
         const enabled = await groupSettingsService.isAutoSuggestEnabled(ctx, groupJid);
+        console.log('[ AUTOSUGGEST ] enabled?', enabled);
         if (!enabled) return;
 
         const key = ctx.rawMessage?.key || {};
-        const senderJid = key.participant || ctx.jid;
+        let senderJid = key.participant || ctx.jid;
+        if (senderJid && String(senderJid).endsWith('@lid') && key.participantAlt) {
+            senderJid = key.participantAlt;
+        }
+        console.log('[ AUTOSUGGEST ] senderJid', senderJid);
         if (!senderJid) return;
 
         const intent = await detectIntent(ctx, text);
+        console.log('[ AUTOSUGGEST ] intent', intent
+            ? { keyword: intent.primaryKeyword, codes: intent.variants.map(v => v.codeVariant) }
+            : null);
         if (!intent) return;
 
-        if (!autoSuggestCooldown.canTrigger(senderJid, intent.primaryKeyword)) return;
+        const canTrigger = autoSuggestCooldown.canTrigger(senderJid, intent.primaryKeyword);
+        console.log('[ AUTOSUGGEST ] cooldown.canTrigger', canTrigger, 'key=', `${senderJid}::${intent.primaryKeyword}`);
+        if (!canTrigger) return;
 
         const enriched = await variantSearchService.enrichPrices(ctx, intent.variants);
+        console.log('[ AUTOSUGGEST ] enriched', enriched.length);
         if (enriched.length === 0) return;
 
         const phone = String(senderJid).split('@')[0].split(':')[0];
         const body = formatAutoSuggestReply(enriched, { mentionPhone: phone });
         if (!body) return;
 
+        console.log('[ AUTOSUGGEST ] sending to', ctx.chat, 'mentions=', [senderJid]);
         await ctx.sock.sendMessage(
             ctx.chat,
             { text: body, mentions: [senderJid] },
             { quoted: ctx.rawMessage }
-        );
+        ).catch(err => {
+            console.log('[ AUTOSUGGEST ] sendMessage failed', err.message, err.stack);
+            throw err;
+        });
+        console.log('[ AUTOSUGGEST ] reply sent');
 
         autoSuggestCooldown.markTriggered(senderJid, intent.primaryKeyword);
     } catch (err) {
@@ -107,6 +144,7 @@ async function maybeReply(ctx, text) {
             ` [${moment().format('HH:mm:ss')}]: ` +
             clc.redBright(`autoSuggestService.maybeReply: ${err.message}`)
         );
+        console.log('[ AUTOSUGGEST ] error stack', err.stack);
     }
 }
 

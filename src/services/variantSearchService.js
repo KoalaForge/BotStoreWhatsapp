@@ -17,11 +17,15 @@ async function _loadCache(ctx, key) {
         productVariantRepository.findActiveVariants(ctx),
         productRepository.findActiveProducts(ctx)
     ]);
+    console.log('[ AUTOSUGGEST ] _loadCache', { key, variants: variants.length, products: products.length });
     const productMap = new Map(products.map(p => [p.code, p.name]));
     const enriched = variants.map(v => ({
         ...v,
         productName: productMap.get(v.code) || null
     }));
+    if (enriched.length === 0) {
+        console.log('[ AUTOSUGGEST ] _loadCache EMPTY — kemungkinan isolation filter mismatch atau DB kosong (cek mode + ownerId)');
+    }
     variantSearchCache.set(key, enriched);
     return enriched;
 }
