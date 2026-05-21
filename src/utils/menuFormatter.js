@@ -143,11 +143,49 @@ function renderCompactList(productsWithVariants, { mentionPhone = null } = {}) {
     return lines.join('\n');
 }
 
+function _priceLabel(price) {
+    if (typeof price !== 'number' || !isFinite(price) || price <= 0) return '-';
+    return formatMoney(price);
+}
+
+function renderSuggestionGroups(variants) {
+    if (!Array.isArray(variants) || variants.length === 0) {
+        return { blocks: [], firstCode: null };
+    }
+
+    const groups = new Map();
+    for (const v of variants) {
+        const key = v.productName ? String(v.productName) : '(Tanpa Produk)';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(v);
+    }
+
+    const blocks = [];
+    let firstCode = null;
+    let idx = 0;
+    for (const [productName, list] of groups) {
+        idx += 1;
+        const lines = [`📦 *#${idx} ${productName.toUpperCase()}*`];
+        for (const v of list) {
+            const variantName = String(v.name || '-').toUpperCase();
+            const code = v.codeVariant || '-';
+            const price = _priceLabel(v.price);
+            if (!firstCode && code !== '-') firstCode = code;
+            lines.push(`* ${variantName} │ ${price}`);
+            lines.push(`    └ -Kode: \`${code}\``);
+        }
+        blocks.push(lines.join('\n'));
+    }
+
+    return { blocks, firstCode };
+}
+
 module.exports = {
     renderWelcomeHeader,
     renderSectionBlock,
     renderPanduanBlock,
     renderPintasanBlock,
     renderVariantCard,
-    renderCompactList
+    renderCompactList,
+    renderSuggestionGroups
 };
