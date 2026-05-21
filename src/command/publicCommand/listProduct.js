@@ -60,19 +60,30 @@ const listProduct = async (ctx) => {
             const variantsByProductCompact = await Promise.all(
                 allProducts.map(p => buildVariantItems(ctx, p, ownerId))
             );
-            const productsWithVariants = allProducts.map((p, i) => ({
-                name: p.name,
-                variants: variantsByProductCompact[i] || []
-            }));
-            const compactText = renderCompactList(productsWithVariants);
-            const sentMsg = await ctx.reply(compactText);
+
+            const productsWithVariants = [];
+            const productMap = [];
+            for (let i = 0; i < allProducts.length; i++) {
+                const variants = variantsByProductCompact[i] || [];
+                const readyVariants = variants.filter(v => (v.stock || 0) > 0);
+                if (readyVariants.length === 0) continue;
+                productsWithVariants.push({ name: allProducts[i].name, variants });
+                productMap.push({ code: allProducts[i].code, name: allProducts[i].name });
+            }
+
+            const msgKey = ctx.rawMessage?.key || {};
+            const senderJid = msgKey.participant || ctx.jid;
+            const mentionPhone = String(senderJid).split('@')[0].split(':')[0];
+
+            const compactText = renderCompactList(productsWithVariants, { mentionPhone });
+            const sentMsg = await ctx.reply(compactText, { mentions: [senderJid] });
 
             screenState.setScreen(jid, 'PRODUCT_LIST', {});
-            if (sentMsg?.key?.id) {
+            if (sentMsg?.key?.id && productMap.length > 0) {
                 groupListCache.set(ctx.from, {
                     stanzaId: sentMsg.key.id,
                     groupJid: ctx.chat,
-                    productMap: allProducts.map(p => ({ code: p.code, name: p.name }))
+                    productMap
                 });
             }
             return;

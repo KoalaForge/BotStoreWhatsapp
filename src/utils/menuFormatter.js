@@ -66,20 +66,23 @@ function renderVariantCard({ productIndex, productName, variant, soldCount }) {
     return renderSectionBlock(title, body);
 }
 
-function renderCompactList(productsWithVariants) {
+function renderCompactList(productsWithVariants, { mentionPhone = null } = {}) {
     const productBlocks = [];
     let firstReadyCode = null;
+    let productIndex = 0;
 
     for (const product of productsWithVariants) {
         const readyVariants = (product.variants || []).filter(v => (v.stock || 0) > 0);
         if (readyVariants.length === 0) continue;
 
-        const rows = readyVariants.map(v => {
+        productIndex += 1;
+        const blockLines = [`📦 *#${productIndex} ${product.name.toUpperCase()}*`];
+        for (const v of readyVariants) {
             if (!firstReadyCode) firstReadyCode = v.code;
-            return `${v.code} │ ${v.name} │ ${formatMoney(v.price)}`;
-        });
-
-        productBlocks.push([`━━ ${product.name.toUpperCase()} ━━`, ...rows].join('\n'));
+            blockLines.push(`* ${v.name.toUpperCase()} │ ${formatMoney(v.price)}`);
+            blockLines.push(`    └ -Kode: \`${v.code}\``);
+        }
+        productBlocks.push(blockLines.join('\n'));
     }
 
     if (productBlocks.length === 0) {
@@ -87,16 +90,20 @@ function renderCompactList(productsWithVariants) {
     }
 
     const exampleCode = firstReadyCode || '<kode>';
+    const title = mentionPhone
+        ? `@${mentionPhone} *Daftar Produk*`
+        : '*Daftar Produk*';
+
     const lines = [
-        '*Daftar Produk*',
-        '📊 Format: KODE │ NAMA │ HARGA',
+        title,
+        '📊 Format: NAMA │ HARGA  •  Kode di subline',
         '',
-        productBlocks.join('\n\n'),
+        '🛍️ *PANDUAN ORDER:*',
+        '* QRIS  : `.buy <kode> <jumlah>`',
+        '* Saldo : `.buynow <kode> <jumlah>`',
+        `_Contoh:_ \`.buy ${exampleCode} 1\``,
         '',
-        '🛍 *PANDUAN ORDER:*',
-        '• QRIS  : `.buy <kode> <jumlah>`',
-        '• Saldo : `.buynow <kode> <jumlah>`',
-        `_Contoh:_ \`.buy ${exampleCode} 1\``
+        productBlocks.join('\n\n')
     ];
 
     return lines.join('\n');
