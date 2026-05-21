@@ -110,6 +110,7 @@ function registerCommands(router) {
     safeCommand(router, ['listcs', 'daftarcs'], command.listCS);
     safeCommand(router, ['togglesaldo', 'setsaldo'], command.toggleSaldo);
     safeCommand(router, ['togglewelcome', 'setwelcome'], command.toggleWelcome);
+    safeCommand(router, ['compactlist', 'togglecompactlist'], command.toggleCompactListCommand);
     safeCommand(router, 'broadcast', command.broadcastCommand);
 
     // ============================================

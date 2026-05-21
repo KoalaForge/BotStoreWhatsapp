@@ -66,10 +66,47 @@ function renderVariantCard({ productIndex, productName, variant, soldCount }) {
     return renderSectionBlock(title, body);
 }
 
+function renderCompactList(productsWithVariants) {
+    const productBlocks = [];
+    let firstReadyCode = null;
+
+    for (const product of productsWithVariants) {
+        const readyVariants = (product.variants || []).filter(v => (v.stock || 0) > 0);
+        if (readyVariants.length === 0) continue;
+
+        const rows = readyVariants.map(v => {
+            if (!firstReadyCode) firstReadyCode = v.code;
+            return `${v.code} │ ${v.name} │ ${formatMoney(v.price)}`;
+        });
+
+        productBlocks.push([`━━ ${product.name.toUpperCase()} ━━`, ...rows].join('\n'));
+    }
+
+    if (productBlocks.length === 0) {
+        return '*Belum ada produk tersedia*';
+    }
+
+    const exampleCode = firstReadyCode || '<kode>';
+    const lines = [
+        '*Daftar Produk*',
+        '📊 Format: KODE │ NAMA │ HARGA',
+        '',
+        productBlocks.join('\n\n'),
+        '',
+        '🛍 *PANDUAN ORDER:*',
+        '• QRIS  : `.buy <kode> <jumlah>`',
+        '• Saldo : `.buynow <kode> <jumlah>`',
+        `_Contoh:_ \`.buy ${exampleCode} 1\``
+    ];
+
+    return lines.join('\n');
+}
+
 module.exports = {
     renderWelcomeHeader,
     renderSectionBlock,
     renderPanduanBlock,
     renderPintasanBlock,
-    renderVariantCard
+    renderVariantCard,
+    renderCompactList
 };

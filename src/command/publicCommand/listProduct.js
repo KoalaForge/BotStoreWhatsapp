@@ -4,6 +4,7 @@ const productRepository = require('../../repositories/ProductRepository');
 const botUserRepository = require('../../repositories/BotUserRepository');
 const botUserBalanceRepository = require('../../repositories/BotUserBalanceRepository');
 const settingsService = require('../../services/settingsService');
+const groupSettingsService = require('../../services/groupSettingsService');
 const { formatMoney } = require('../../database/models/money');
 const screenState = require('../../state/screenState');
 const groupListCache = require('../../state/groupListCache');
@@ -17,7 +18,8 @@ const {
     renderWelcomeHeader,
     renderPanduanBlock,
     renderPintasanBlock,
-    renderVariantCard
+    renderVariantCard,
+    renderCompactList
 } = require('../../utils/menuFormatter');
 
 const listProduct = async (ctx) => {
@@ -47,6 +49,32 @@ const listProduct = async (ctx) => {
 
         if (allProducts.length === 0) {
             await ctx.reply('*Belum ada produk tersedia*');
+            return;
+        }
+
+        const compactMode = ctx.isGroup
+            && ctx.command === 'list'
+            && await groupSettingsService.isCompactListEnabled(ctx, ctx.chat);
+
+        if (compactMode) {
+            const variantsByProductCompact = await Promise.all(
+                allProducts.map(p => buildVariantItems(ctx, p, ownerId))
+            );
+            const productsWithVariants = allProducts.map((p, i) => ({
+                name: p.name,
+                variants: variantsByProductCompact[i] || []
+            }));
+            const compactText = renderCompactList(productsWithVariants);
+            const sentMsg = await ctx.reply(compactText);
+
+            screenState.setScreen(jid, 'PRODUCT_LIST', {});
+            if (sentMsg?.key?.id) {
+                groupListCache.set(ctx.from, {
+                    stanzaId: sentMsg.key.id,
+                    groupJid: ctx.chat,
+                    productMap: allProducts.map(p => ({ code: p.code, name: p.name }))
+                });
+            }
             return;
         }
 

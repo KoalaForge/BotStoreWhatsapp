@@ -205,6 +205,7 @@ class MessageRouter {
         const entry = this._commands.get(cmdName);
         if (entry) {
             // Store command args in ctx for handler access
+            ctx.command = cmdName;
             ctx.commandArgs = args;
             ctx.commandText = parts.slice(1).join(' ');
             // For compatibility: ctx.match = [fullText, ...capturedGroups]
