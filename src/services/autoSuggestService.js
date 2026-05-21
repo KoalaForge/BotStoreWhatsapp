@@ -3,7 +3,8 @@ const groupSettingsService = require('./groupSettingsService');
 const autoSuggestCooldown = require('../state/autoSuggestCooldown');
 const { formatAutoSuggestReply } = require('../utils/autoSuggestReply');
 
-const MIN_TOKEN_LENGTH = 4;
+const MIN_TOKEN_LENGTH = 3;
+const SHORT_TOKEN_THRESHOLD = 4;
 const MIN_SCORE_THRESHOLD = 150;
 const MAX_SUGGESTIONS = 5;
 const PER_TOKEN_SCAN_LIMIT = 10;
@@ -40,8 +41,21 @@ async function detectIntent(ctx, text) {
             console.log('[ AUTOSUGGEST ] findSimilarScored error', token, err.message);
             continue;
         }
+
+        if (token.length < SHORT_TOKEN_THRESHOLD) {
+            hits = hits.filter(h => {
+                const code = String(h.variant.codeVariant || '').toLowerCase();
+                const name = String(h.variant.name || '').toLowerCase();
+                const pName = String(h.variant.productName || '').toLowerCase();
+                return code.startsWith(token)
+                    || name.startsWith(token)
+                    || pName.startsWith(token);
+            });
+        }
+
         console.log('[ AUTOSUGGEST ] hits', {
             token,
+            len: token.length,
             count: hits.length,
             top: hits.slice(0, 3).map(h => ({ code: h.variant.codeVariant, score: h.score }))
         });
