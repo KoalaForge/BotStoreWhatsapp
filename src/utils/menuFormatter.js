@@ -67,25 +67,47 @@ function renderVariantCard({ productIndex, productName, variant, soldCount }) {
 }
 
 function renderCompactList(productsWithVariants, { mentionPhone = null } = {}) {
-    const productBlocks = [];
-    let firstReadyCode = null;
-    let productIndex = 0;
+    const readyEntries = [];
+    const habisEntries = [];
 
     for (const product of productsWithVariants) {
-        const readyVariants = (product.variants || []).filter(v => (v.stock || 0) > 0);
-        if (readyVariants.length === 0) continue;
+        const variants = product.variants || [];
+        if (variants.length === 0) continue;
+        const readyVariants = variants.filter(v => (v.stock || 0) > 0);
+        if (readyVariants.length > 0) {
+            readyEntries.push({ product, variants: readyVariants });
+        } else {
+            habisEntries.push({ product, variants });
+        }
+    }
 
-        productIndex += 1;
-        const blockLines = [`📦 *#${productIndex} ${product.name.toUpperCase()}*`];
-        for (const v of readyVariants) {
+    const readyBlocks = [];
+    const habisBlocks = [];
+    let firstReadyCode = null;
+    let idx = 0;
+
+    for (const { product, variants } of readyEntries) {
+        idx += 1;
+        const blockLines = [`📦 *#${idx} ${product.name.toUpperCase()}*`];
+        for (const v of variants) {
             if (!firstReadyCode) firstReadyCode = v.code;
             blockLines.push(`* ${v.name.toUpperCase()} │ ${formatMoney(v.price)}`);
             blockLines.push(`    └ -Kode: \`${v.code}\``);
         }
-        productBlocks.push(blockLines.join('\n'));
+        readyBlocks.push(blockLines.join('\n'));
     }
 
-    if (productBlocks.length === 0) {
+    for (const { product, variants } of habisEntries) {
+        idx += 1;
+        const blockLines = [`📦 *#${idx} ${product.name.toUpperCase()}* _(stok habis)_`];
+        for (const v of variants) {
+            blockLines.push(`* ~${v.name.toUpperCase()}~ │ ❌ HABIS`);
+            blockLines.push(`    └ -Kode: \`${v.code}\``);
+        }
+        habisBlocks.push(blockLines.join('\n'));
+    }
+
+    if (readyBlocks.length === 0 && habisBlocks.length === 0) {
         return '*Belum ada produk tersedia*';
     }
 
@@ -102,9 +124,21 @@ function renderCompactList(productsWithVariants, { mentionPhone = null } = {}) {
         '* QRIS  : `.buy <kode> <jumlah>`',
         '* Saldo : `.buynow <kode> <jumlah>`',
         `_Contoh:_ \`.buy ${exampleCode} 1\``,
-        '',
-        productBlocks.join('\n\n')
+        ''
     ];
+
+    if (readyBlocks.length > 0) {
+        lines.push(readyBlocks.join('\n\n'));
+    }
+
+    if (habisBlocks.length > 0) {
+        if (readyBlocks.length > 0) {
+            lines.push('');
+            lines.push('━━━━━ ❌ *STOK HABIS* ━━━━━');
+            lines.push('');
+        }
+        lines.push(habisBlocks.join('\n\n'));
+    }
 
     return lines.join('\n');
 }

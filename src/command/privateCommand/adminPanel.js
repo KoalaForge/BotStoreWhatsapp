@@ -47,6 +47,9 @@ const getAdminPanelContent = () => {
     text += '*CS & Fitur*\n';
     text += '`.addcs` `.removecs` `.listcs` `.togglesaldo` `.togglewelcome`\n\n';
 
+    text += '*Group Settings*\n';
+    text += '`.compactlist` `.autosuggest`\n\n';
+
     text += '*Whitelist*\n';
     text += '`.togglewhitelist` `.listwhitelist` `.approvewhitelist` `.rejectwhitelist` `.carawhitelist`\n\n';
 

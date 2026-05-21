@@ -1,5 +1,6 @@
 const groupListCache = require('../state/groupListCache');
 const handleListReplyToDM = require('../command/publicCommand/handleListReplyToDM');
+const autoSuggestService = require('../services/autoSuggestService');
 
 /**
  * Commands the bot answers when invoked in a group chat.
@@ -18,7 +19,8 @@ const GROUP_ALLOWED_COMMANDS = new Set([
     'kick',
     'tagall', 'tag',
     'hidetag', 'htag',
-    'compactlist', 'togglecompactlist'
+    'compactlist', 'togglecompactlist',
+    'autosuggest', 'toggleautosuggest'
 ]);
 
 /**
@@ -68,8 +70,15 @@ const waGroupFilterMiddleware = async (ctx, next) => {
         }
     }
 
-    // 2. Whitelisted dot-commands continue down the chain.
-    if (!text.startsWith('.')) return; // silent ignore
+    // 2. Plain text — try auto-suggest before silent drop.
+    if (!text.startsWith('.')) {
+        if (text.length >= 4) {
+            autoSuggestService.maybeReply(ctx, text).catch(() => {});
+        }
+        return; // silent ignore for command routing
+    }
+
+    // 3. Whitelisted dot-commands continue down the chain.
     const cmdName = text.slice(1).split(/\s+/)[0].toLowerCase();
     if (!GROUP_ALLOWED_COMMANDS.has(cmdName)) return; // silent ignore
 

@@ -12,6 +12,7 @@ const { openGroupCommand, closeGroupCommand } = require('./publicCommand/openClo
 const kickCommand = require('./publicCommand/kickCommand');
 const { tagAllCommand, hideTagCommand } = require('./publicCommand/tagAllCommand');
 const toggleCompactListCommand = require('./publicCommand/toggleCompactListCommand');
+const toggleAutoSuggestCommand = require('./publicCommand/toggleAutoSuggestCommand');
 const {
     showTransactionHistory,
     showPurchaseHistory,
@@ -171,6 +172,7 @@ module.exports = {
     tagAllCommand,
     hideTagCommand,
     toggleCompactListCommand,
+    toggleAutoSuggestCommand,
     showTransactionHistory,
     showPurchaseHistory,
     showDepositHistory,

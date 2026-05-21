@@ -51,7 +51,7 @@ function scoreVariant(query, variant) {
     return score;
 }
 
-function rankVariants(query, variants, limit = 5) {
+function rankVariantsWithScore(query, variants, limit = 5) {
     if (!Array.isArray(variants) || variants.length === 0) return [];
 
     const scored = [];
@@ -61,7 +61,11 @@ function rankVariants(query, variants, limit = 5) {
     }
 
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map(s => s.variant);
+    return scored.slice(0, limit);
 }
 
-module.exports = { scoreVariant, rankVariants };
+function rankVariants(query, variants, limit = 5) {
+    return rankVariantsWithScore(query, variants, limit).map(s => s.variant);
+}
+
+module.exports = { scoreVariant, rankVariants, rankVariantsWithScore };

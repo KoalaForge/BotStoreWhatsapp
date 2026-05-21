@@ -16,6 +16,11 @@ const groupSettingsSchema = new Schema({
         type: Boolean,
         required: false,
         default: false
+    },
+    autoSuggestEnabled: {
+        type: Boolean,
+        required: false,
+        default: true
     }
 }, {
     timestamps: true

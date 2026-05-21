@@ -111,6 +111,7 @@ function registerCommands(router) {
     safeCommand(router, ['togglesaldo', 'setsaldo'], command.toggleSaldo);
     safeCommand(router, ['togglewelcome', 'setwelcome'], command.toggleWelcome);
     safeCommand(router, ['compactlist', 'togglecompactlist'], command.toggleCompactListCommand);
+    safeCommand(router, ['autosuggest', 'toggleautosuggest'], command.toggleAutoSuggestCommand);
     safeCommand(router, 'broadcast', command.broadcastCommand);
 
     // ============================================

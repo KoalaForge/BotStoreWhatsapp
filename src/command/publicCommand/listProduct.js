@@ -61,15 +61,23 @@ const listProduct = async (ctx) => {
                 allProducts.map(p => buildVariantItems(ctx, p, ownerId))
             );
 
-            const productsWithVariants = [];
-            const productMap = [];
+            const readyProducts = [];
+            const habisProducts = [];
             for (let i = 0; i < allProducts.length; i++) {
                 const variants = variantsByProductCompact[i] || [];
-                const readyVariants = variants.filter(v => (v.stock || 0) > 0);
-                if (readyVariants.length === 0) continue;
-                productsWithVariants.push({ name: allProducts[i].name, variants });
-                productMap.push({ code: allProducts[i].code, name: allProducts[i].name });
+                if (variants.length === 0) continue;
+                const hasReady = variants.some(v => (v.stock || 0) > 0);
+                const entry = {
+                    product: { name: allProducts[i].name, variants },
+                    map: { code: allProducts[i].code, name: allProducts[i].name }
+                };
+                if (hasReady) readyProducts.push(entry);
+                else habisProducts.push(entry);
             }
+
+            const ordered = [...readyProducts, ...habisProducts];
+            const productsWithVariants = ordered.map(e => e.product);
+            const productMap = ordered.map(e => e.map);
 
             const msgKey = ctx.rawMessage?.key || {};
             const senderJid = msgKey.participant || ctx.jid;

@@ -13,6 +13,16 @@ class GroupSettingsService {
     async setCompactListEnabled(ctx, groupJid, enabled) {
         return await groupSettingsRepository.setField(ctx, groupJid, 'compactListEnabled', Boolean(enabled));
     }
+
+    async isAutoSuggestEnabled(ctx, groupJid) {
+        if (!groupJid) return true;
+        const doc = await groupSettingsRepository.findByGroup(ctx, groupJid);
+        return doc?.autoSuggestEnabled !== false;
+    }
+
+    async setAutoSuggestEnabled(ctx, groupJid, enabled) {
+        return await groupSettingsRepository.setField(ctx, groupJid, 'autoSuggestEnabled', Boolean(enabled));
+    }
 }
 
 module.exports = new GroupSettingsService();
