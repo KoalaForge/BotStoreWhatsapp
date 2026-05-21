@@ -17,7 +17,8 @@ const GROUP_ALLOWED_COMMANDS = new Set([
     'close', 'closegroup', 'closechat',
     'kick',
     'tagall', 'tag',
-    'hidetag', 'htag'
+    'hidetag', 'htag',
+    'compactlist', 'togglecompactlist'
 ]);
 
 /**
