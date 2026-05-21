@@ -105,15 +105,20 @@ async function findExactMatch(ctx, normalizedText) {
     let variants = variantSearchCache.get(key);
     if (!variants) variants = await _loadCache(ctx, key);
 
+    const inputWithSpace = normalizedText + ' ';
     const matches = [];
     const seen = new Set();
+
     for (const v of variants) {
         const code = String(v.codeVariant || '').toLowerCase();
         const name = String(v.name || '').toLowerCase();
         const pName = String(v.productName || '').toLowerCase();
-        if (normalizedText === code
-            || normalizedText === name
-            || normalizedText === pName) {
+
+        const codeHit = code === normalizedText;
+        const nameHit = name === normalizedText || (name && name.startsWith(inputWithSpace));
+        const pNameHit = pName === normalizedText || (pName && pName.startsWith(inputWithSpace));
+
+        if (codeHit || nameHit || pNameHit) {
             if (!seen.has(v.codeVariant)) {
                 seen.add(v.codeVariant);
                 matches.push(v);
