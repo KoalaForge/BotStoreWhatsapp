@@ -97,6 +97,11 @@ const settingSchema = new Schema({
         type: Boolean,
         required: false
     },
+    showLastRestockEnabled: {
+        type: Boolean,
+        required: false,
+        default: false
+    },
 }, {
     timestamps: true
 });

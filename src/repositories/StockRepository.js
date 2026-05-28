@@ -267,6 +267,27 @@ class StockRepository extends BaseRepository {
     }
 
     /**
+     * Get latest stock entry createdAt per platform variant (ownerId=null).
+     * Mirror of getLatestRestockBatch but for reseller/platform stock that is
+     * shared across all bots (not owner-scoped).
+     * @param {Array<string>} codeVariants - Array of variant codes
+     * @returns {Promise<Map<string, Date>>} - Map of codeVariant → latest createdAt
+     */
+    async getLatestRestockBatchPlatform(codeVariants) {
+        if (!codeVariants || codeVariants.length === 0) return new Map();
+        const normalized = codeVariants.map(cv => this._normalizeValue(cv));
+        const results = await this.model.aggregate([
+            { $match: { codeVariant: { $in: normalized }, ownerId: null } },
+            { $group: { _id: '$codeVariant', latest: { $max: '$createdAt' } } }
+        ]);
+        const map = new Map();
+        for (const r of results) {
+            map.set(r._id, r.latest);
+        }
+        return map;
+    }
+
+    /**
      * Count platform stock for multiple variants in a single aggregation (ownerId=null)
      * @param {Array<string>} codeVariants - Array of variant codes
      * @returns {Promise<Map<string, number>>} - Map of codeVariant → stock count

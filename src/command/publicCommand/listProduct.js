@@ -105,14 +105,24 @@ const listProduct = async (ctx) => {
         ]);
 
         const allVariantCodes = variantsByProduct.flat().map(v => v.code);
+        // Toggle scope is context-aware (matches toggleShowLastRestockCommand):
+        // group → per-group setting; DM → global per-bot setting.
         const showLastRestock = ctx.isGroup
-            && await groupSettingsService.isShowLastRestockEnabled(ctx, ctx.chat);
-        const [soldMap, restockMap] = await Promise.all([
+            ? await groupSettingsService.isShowLastRestockEnabled(ctx, ctx.chat)
+            : (setting?.showLastRestockEnabled === true);
+        const [soldMap, ownerRestock, platformRestock] = await Promise.all([
             getStockTerjualBatch(ctx, allVariantCodes),
             showLastRestock
                 ? stockRepository.getLatestRestockBatch(ctx, allVariantCodes)
+                : Promise.resolve(new Map()),
+            showLastRestock
+                ? stockRepository.getLatestRestockBatchPlatform(allVariantCodes)
                 : Promise.resolve(new Map())
         ]);
+        // Merge: ownerscoped wins over platform when both have an entry
+        // (owner-specific restock is more meaningful than the shared one).
+        const restockMap = new Map(platformRestock);
+        for (const [k, v] of ownerRestock) restockMap.set(k, v);
 
         const greeting = buildGreeting();
         const banner = resolveBanner(setting);

@@ -45,10 +45,10 @@ const getAdminPanelContent = () => {
     text += '`.cycle` `.cyclebulk` `.rekapcycle` `.ceksiklus` `.setcyclable` `.setcycleduration`\n\n';
 
     text += '*CS & Fitur*\n';
-    text += '`.addcs` `.removecs` `.listcs` `.togglesaldo` `.togglewelcome`\n\n';
+    text += '`.addcs` `.removecs` `.listcs` `.togglesaldo` `.togglewelcome` `.togglerestokinfo`\n\n';
 
     text += '*Group Settings*\n';
-    text += '`.compactlist` `.autosuggest` `.togglerestokinfo`\n\n';
+    text += '`.compactlist` `.autosuggest`\n\n';
 
     text += '*Whitelist*\n';
     text += '`.togglewhitelist` `.listwhitelist` `.approvewhitelist` `.rejectwhitelist` `.carawhitelist`\n\n';
