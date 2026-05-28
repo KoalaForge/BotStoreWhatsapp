@@ -49,8 +49,7 @@ function generateFileContent({
     if (orderData) {
         const accounts = orderData.split('\n').filter(line => line.trim());
 
-        accounts.forEach((account, index) => {
-            lines.push(`[Data ${index + 1}]`);
+        accounts.forEach((account) => {
             if (account.includes(',')) {
                 const parts = account.split(',');
                 parts.forEach(part => lines.push(part.trim()));
