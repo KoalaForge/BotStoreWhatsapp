@@ -23,6 +23,16 @@ class GroupSettingsService {
     async setAutoSuggestEnabled(ctx, groupJid, enabled) {
         return await groupSettingsRepository.setField(ctx, groupJid, 'autoSuggestEnabled', Boolean(enabled));
     }
+
+    async isShowLastRestockEnabled(ctx, groupJid) {
+        if (!groupJid) return false;
+        const doc = await groupSettingsRepository.findByGroup(ctx, groupJid);
+        return doc?.showLastRestockEnabled === true;
+    }
+
+    async setShowLastRestockEnabled(ctx, groupJid, enabled) {
+        return await groupSettingsRepository.setField(ctx, groupJid, 'showLastRestockEnabled', Boolean(enabled));
+    }
 }
 
 module.exports = new GroupSettingsService();

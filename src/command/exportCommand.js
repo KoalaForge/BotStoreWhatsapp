@@ -13,6 +13,7 @@ const kickCommand = require('./publicCommand/kickCommand');
 const { tagAllCommand, hideTagCommand } = require('./publicCommand/tagAllCommand');
 const toggleCompactListCommand = require('./publicCommand/toggleCompactListCommand');
 const toggleAutoSuggestCommand = require('./publicCommand/toggleAutoSuggestCommand');
+const toggleShowLastRestockCommand = require('./publicCommand/toggleShowLastRestockCommand');
 const {
     showTransactionHistory,
     showPurchaseHistory,
@@ -150,6 +151,7 @@ const caraSetFee = require('./helpCommand/caraSetFee');
 const caraVoucher = require('./helpCommand/caraVoucher');
 const caraCS = require('./helpCommand/caraCS');
 const caraToggleFeature = require('./helpCommand/caraToggleFeature');
+const caraToggleRestokInfo = require('./helpCommand/caraToggleRestokInfo');
 const caraRecapProduct = require('./helpCommand/caraRecapProduct');
 const delProductVariantSnk = delProductVariantSnk_cmd;
 const caraCycle = require('./helpCommand/caraCycle');
@@ -173,6 +175,7 @@ module.exports = {
     hideTagCommand,
     toggleCompactListCommand,
     toggleAutoSuggestCommand,
+    toggleShowLastRestockCommand,
     showTransactionHistory,
     showPurchaseHistory,
     showDepositHistory,
@@ -278,6 +281,7 @@ module.exports = {
     caraVoucher,
     caraCS,
     caraToggleFeature,
+    caraToggleRestokInfo,
     caraRecapProduct,
     caraCycle,
     caraTierPricing,

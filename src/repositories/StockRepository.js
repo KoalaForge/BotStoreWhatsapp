@@ -245,6 +245,28 @@ class StockRepository extends BaseRepository {
     }
 
     /**
+     * Get latest stock entry createdAt per variant in a single aggregation.
+     * Used as proxy for "last restock time" — each .addstock creates a new
+     * stock_data_variants doc, so MAX(createdAt) per codeVariant = most recent restock.
+     * @param {Object} context - Repository context
+     * @param {Array<string>} codeVariants - Array of variant codes
+     * @returns {Promise<Map<string, Date>>} - Map of codeVariant (normalized) → latest createdAt
+     */
+    async getLatestRestockBatch(context, codeVariants) {
+        if (!codeVariants || codeVariants.length === 0) return new Map();
+        const normalized = codeVariants.map(cv => this._normalizeValue(cv));
+        const results = await this.aggregate(context, [
+            { $match: { codeVariant: { $in: normalized } } },
+            { $group: { _id: '$codeVariant', latest: { $max: '$createdAt' } } }
+        ]);
+        const map = new Map();
+        for (const r of results) {
+            map.set(r._id, r.latest);
+        }
+        return map;
+    }
+
+    /**
      * Count platform stock for multiple variants in a single aggregation (ownerId=null)
      * @param {Array<string>} codeVariants - Array of variant codes
      * @returns {Promise<Map<string, number>>} - Map of codeVariant → stock count

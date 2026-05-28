@@ -21,6 +21,11 @@ const groupSettingsSchema = new Schema({
         type: Boolean,
         required: false,
         default: true
+    },
+    showLastRestockEnabled: {
+        type: Boolean,
+        required: false,
+        default: false
     }
 }, {
     timestamps: true

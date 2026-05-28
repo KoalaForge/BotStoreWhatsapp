@@ -112,6 +112,7 @@ function registerCommands(router) {
     safeCommand(router, ['togglewelcome', 'setwelcome'], command.toggleWelcome);
     safeCommand(router, ['compactlist', 'togglecompactlist'], command.toggleCompactListCommand);
     safeCommand(router, ['autosuggest', 'toggleautosuggest'], command.toggleAutoSuggestCommand);
+    safeCommand(router, ['togglerestokinfo', 'togglelastrestock', 'togglerestock'], command.toggleShowLastRestockCommand);
     safeCommand(router, 'broadcast', command.broadcastCommand);
 
     // ============================================
@@ -180,6 +181,7 @@ function registerCommands(router) {
     router.command(['caravoucher'], command.caraVoucher);
     router.command(['caracs'], command.caraCS);
     router.command(['caratoggle', 'caratogglefitur'], command.caraToggleFeature);
+    router.command(['caratogglerestokinfo', 'caratogglelastrestock', 'cararestokinfo'], command.caraToggleRestokInfo);
     router.command('caracycle', command.caraCycle);
     router.command(['carabroadcast'], command.caraBroadcast);
     router.command(['caratierpricing', 'caragrosir'], command.caraTierPricing);

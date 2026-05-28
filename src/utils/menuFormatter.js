@@ -46,13 +46,16 @@ function renderPintasanBlock(isGroup = false) {
     return renderSectionBlock('⚡ PINTASAN', lines);
 }
 
-function renderVariantCard({ productIndex, productName, variant, soldCount }) {
+function renderVariantCard({ productIndex, productName, variant, soldCount, lastRestockText }) {
     const stockText = variant.stock > 0 ? String(variant.stock) : 'HABIS ❌';
     const body = [
         `💵 | Harga     : ${formatMoney(variant.price)}`,
         `📦 | Stok      : ${stockText}`,
         `🔥 | Terjual   : ${soldCount}`
     ];
+    if (lastRestockText) {
+        body.push(`🔄 | Restok    : ${lastRestockText}`);
+    }
     if (variant.tierHint) {
         body.push(`📥 | Bulk      : min ${variant.tierHint.minQty} pcs · ${formatMoney(variant.tierHint.tierUnitPrice)}/pcs`);
     }

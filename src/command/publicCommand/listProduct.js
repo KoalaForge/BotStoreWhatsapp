@@ -3,6 +3,7 @@ const moment = require('moment-timezone');
 const productRepository = require('../../repositories/ProductRepository');
 const botUserRepository = require('../../repositories/BotUserRepository');
 const botUserBalanceRepository = require('../../repositories/BotUserBalanceRepository');
+const stockRepository = require('../../repositories/StockRepository');
 const settingsService = require('../../services/settingsService');
 const groupSettingsService = require('../../services/groupSettingsService');
 const { formatMoney } = require('../../database/models/money');
@@ -14,6 +15,7 @@ const { buildVariantItems } = require('../../utils/variantDisplayHelper');
 const { getStockTerjualBatch } = require('../../utils/stockUtils');
 const { buildGreeting } = require('../../utils/greetingHelper');
 const { getCompanyName } = require('../../utils/getCompanyName');
+const { humanizeRelativeID } = require('../../utils/relativeTime');
 const {
     renderWelcomeHeader,
     renderPanduanBlock,
@@ -103,7 +105,14 @@ const listProduct = async (ctx) => {
         ]);
 
         const allVariantCodes = variantsByProduct.flat().map(v => v.code);
-        const soldMap = await getStockTerjualBatch(ctx, allVariantCodes);
+        const showLastRestock = ctx.isGroup
+            && await groupSettingsService.isShowLastRestockEnabled(ctx, ctx.chat);
+        const [soldMap, restockMap] = await Promise.all([
+            getStockTerjualBatch(ctx, allVariantCodes),
+            showLastRestock
+                ? stockRepository.getLatestRestockBatch(ctx, allVariantCodes)
+                : Promise.resolve(new Map())
+        ]);
 
         const greeting = buildGreeting();
         const banner = resolveBanner(setting);
@@ -137,11 +146,15 @@ const listProduct = async (ctx) => {
             const productIndex = i + 1;
             for (const v of variants) {
                 const sold = soldMap.get(v.code) || 0;
+                const lastRestockText = showLastRestock
+                    ? humanizeRelativeID(restockMap.get(String(v.code).toLowerCase()))
+                    : null;
                 lines.push(renderVariantCard({
                     productIndex,
                     productName: product.name,
                     variant: v,
-                    soldCount: sold
+                    soldCount: sold,
+                    lastRestockText
                 }));
                 lines.push('');
             }

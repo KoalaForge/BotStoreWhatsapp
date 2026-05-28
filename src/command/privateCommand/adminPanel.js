@@ -16,7 +16,7 @@ const getAdminPanelContent = () => {
     text += '`.addproduct` `.delproduct` `.activateproduct` `.deactivateproduct`\n\n';
 
     text += '*Variant*\n';
-    text += '`.addvariant` `.delvariant` `.setharga` `.setvariantsnk`\n\n';
+    text += '`.addvariant` `.delvariant` `.activateproductvariant` `.deactivateproductvariant` `.setharga` `.setvariantsnk` `.delvariantsnk`\n\n';
 
     text += '*Tier Pricing (Grosir)*\n';
     text += '`.addtierpricing` `.deltierpricing` `.listtierpricing` `.cleartierpricing`\n\n';
@@ -31,10 +31,10 @@ const getAdminPanelContent = () => {
     text += '`.addbalance` `.subtractbalance` `.checkbalance`\n\n';
 
     text += '*Voucher*\n';
-    text += '`.addvoucher` `.deletevoucher` `.listvoucher`\n\n';
+    text += '`.addvoucher` `.deletevoucher` `.activatevoucher` `.deactivatevoucher` `.listvoucher`\n\n';
 
     text += '*Transaksi & Pengaturan*\n';
-    text += '`.checktransaction` `.rekap` `.setproductprefix` `.settopupprefix` `.setfee`\n\n';
+    text += '`.checktransaction` `.rekap` `.rekapproduk` `.setproductprefix` `.settopupprefix` `.setfee`\n\n';
 
     if (isMulti) {
         text += '*Platform*\n';
@@ -48,7 +48,7 @@ const getAdminPanelContent = () => {
     text += '`.addcs` `.removecs` `.listcs` `.togglesaldo` `.togglewelcome`\n\n';
 
     text += '*Group Settings*\n';
-    text += '`.compactlist` `.autosuggest`\n\n';
+    text += '`.compactlist` `.autosuggest` `.togglerestokinfo`\n\n';
 
     text += '*Whitelist*\n';
     text += '`.togglewhitelist` `.listwhitelist` `.approvewhitelist` `.rejectwhitelist` `.carawhitelist`\n\n';
