@@ -167,10 +167,46 @@ async function handleOwnerTopUpDelivery(sock, context, transaction, paymentTimeS
     const ownerId = context.ownerId;
 
     const amountToAdd = transaction.topupAmount || transaction.totalPrice;
-    const creditResult = await ownerBalanceService.creditTopUp(ownerId, amountToAdd, {
-        transactionId: transaction.transactionId,
-        description: `Top-up saldo platform ${formatMoney(amountToAdd)} via QRIS (${transaction.transactionId})`
-    });
+
+    // Exactly-once credit claim (owner records are unscoped: ownerId=null bypasses
+    // OwnerScoped). Claimed BEFORE creditTopUp so a polling requery, the webhook
+    // trigger, and concurrent processes can never credit the same topup twice.
+    const claim = await transactionRepository.updateOneUnscoped(
+        { transactionId: transaction.transactionId, balance_credited: { $ne: true } },
+        { $set: { balance_credited: true } }
+    );
+    if (claim.modifiedCount === 0) {
+        // Already credited by a prior attempt or another path. Settle delivery
+        // to stop the requery loop — do NOT credit.
+        await transactionRepository.updateOneUnscoped(
+            { transactionId: transaction.transactionId },
+            { $set: { isDelivered: true } }
+        );
+        console.log(clc.yellow.bold("[ WARN ]") + ` [${moment().format('HH:mm:ss')}]:` + clc.blueBright(` Skip duplicate owner top-up credit ${transaction.transactionId} (already credited) }`));
+        return;
+    }
+
+    let creditResult;
+    try {
+        creditResult = await ownerBalanceService.creditTopUp(ownerId, amountToAdd, {
+            transactionId: transaction.transactionId,
+            description: `Top-up saldo platform ${formatMoney(amountToAdd)} via QRIS (${transaction.transactionId})`
+        });
+    } catch (err) {
+        // Credit never landed — release the claim so a later retry can credit.
+        await transactionRepository.updateOneUnscoped(
+            { transactionId: transaction.transactionId },
+            { $set: { balance_credited: false } }
+        );
+        throw err;
+    }
+
+    // Settle delivery RIGHT AFTER the credit, before the later platform-record
+    // write, so a downstream failure can no longer trigger a re-credit.
+    await transactionRepository.updateOneUnscoped(
+        { transactionId: transaction.transactionId },
+        { $set: { isDelivered: true } }
+    );
 
     const message = waMessageFormatter.formatOwnerTopUpSuccessMessage({
         transactionId: transaction.transactionId,
@@ -181,11 +217,6 @@ async function handleOwnerTopUpDelivery(sock, context, transaction, paymentTimeS
     });
 
     await withRetry(() => sock.sendMessage(transaction.chatId, { text: message }));
-
-    await transactionRepository.updateOneUnscoped(
-        { transactionId: transaction.transactionId },
-        { $set: { isDelivered: true } }
-    );
 
     await transactionService.createPlatformRecord({
         transactionId: transaction.transactionId,
@@ -211,13 +242,53 @@ async function handleOwnerTopUpDelivery(sock, context, transaction, paymentTimeS
  * Credits the user's balance, sends a WhatsApp success message, notifies admins.
  */
 async function handleTopUpDelivery(sock, context, transaction, paymentTimeString) {
+    const amountToAdd = transaction.topupAmount || transaction.totalPrice;
+
+    // Exactly-once credit claim. Claimed atomically BEFORE the $inc so that a
+    // polling requery (isSuccess:true, isDelivered:false), the webhook trigger,
+    // and concurrent processes can never credit the same topup twice.
+    const claim = await transactionRepository.updateOne(
+        context,
+        { transactionId: transaction.transactionId, balance_credited: { $ne: true } },
+        { $set: { balance_credited: true } }
+    );
+    if (claim.modifiedCount === 0) {
+        // Already credited by a prior attempt or another path. Settle delivery
+        // to stop the requery loop — do NOT credit or re-message.
+        await transactionRepository.updateOne(
+            context,
+            { transactionId: transaction.transactionId },
+            { $set: { isDelivered: true } }
+        );
+        console.log(clc.yellow.bold("[ WARN ]") + ` [${moment().format('HH:mm:ss')}]:` + clc.blueBright(` Skip duplicate top-up credit ${transaction.transactionId} (already credited) }`));
+        return;
+    }
+
     console.log(clc.green.bold("[ INFO ]") + ` [${moment().format('HH:mm:ss')}]:` + clc.blueBright(` Berhasil memproses top-up saldo untuk user ${transaction.user_id} (${transaction.transactionId}) }`));
 
-    const amountToAdd = transaction.topupAmount || transaction.totalPrice;
-    const newBalance = await transactionService.topUpBalance(
+    let newBalance;
+    try {
+        newBalance = await transactionService.topUpBalance(
+            context,
+            transaction.user_id,
+            amountToAdd
+        );
+    } catch (err) {
+        // Credit never landed — release the claim so a later retry can credit.
+        await transactionRepository.updateOne(
+            context,
+            { transactionId: transaction.transactionId },
+            { $set: { balance_credited: false } }
+        );
+        throw err;
+    }
+
+    // Settle delivery RIGHT AFTER the credit, before the fallible admin
+    // notification, so an unguarded send failure can no longer trigger a re-credit.
+    await transactionRepository.updateOne(
         context,
-        transaction.user_id,
-        amountToAdd
+        { transactionId: transaction.transactionId },
+        { $set: { isDelivered: true } }
     );
 
     const message = waMessageFormatter.formatTopUpSuccessMessage({
@@ -245,12 +316,6 @@ async function handleTopUpDelivery(sock, context, transaction, paymentTimeString
     });
 
     await sendNotification(sock, notificationMessage, context);
-
-    await transactionRepository.updateOne(
-        context,
-        { transactionId: transaction.transactionId },
-        { $set: { isDelivered: true } }
-    );
 
     // Post thank-you ack into the origin group when this top-up was initiated
     // from a group. Best-effort — group send must not block delivery.

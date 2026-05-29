@@ -157,6 +157,13 @@ const transactionSchema = new Schema({
         type: Boolean,
         default: false
     },
+    // Idempotency flag for topup balance credit (exactly-once guard).
+    // Claimed atomically before $inc so polling retries, the webhook trigger,
+    // and concurrent processes can never credit the same topup twice.
+    balance_credited: {
+        type: Boolean,
+        default: false
+    },
     // Buyer notes — optional message from buyer to seller before checkout
     buyer_notes: {
         type: String,
