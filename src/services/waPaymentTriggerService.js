@@ -18,9 +18,8 @@ const transactionService = require('./transactionService');
 const gatewayResolverService = require('./payment/GatewayResolverService');
 const modeService = require('./modeService');
 const { deliverTransaction } = require('./waTransactionDeliveryService');
+const { resolveSettlementRepair } = require('./settlementRepair');
 const { NotFoundException, ApiException } = require('../exceptions');
-
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 const DELIVERY_STATUS = {
     ALREADY_PROCESSED: 'already_processed',
@@ -31,20 +30,23 @@ const DELIVERY_STATUS = {
 
 class WaPaymentTriggerService {
     /**
-     * Backfill settlement fields when koalabotbe (Laravel) wrote payment fields
-     * directly to Mongo before invoking the bot trigger API, OR when the
-     * polling loop detects an already-paid transaction (isAlreadyPaid=true)
-     * whose settlement fields were never populated.
+     * Reconcile settlement fields for a paid order in MULTI mode.
      *
-     * Idempotent — atomic conditional update; no-op if already populated or
-     * not eligible (SINGLE mode, balance/topup, missing paid_at, etc.).
+     * Runs when koalabotbe (Laravel) wrote payment fields directly to Mongo
+     * before invoking the bot trigger API, or when the polling loop detects an
+     * already-paid transaction whose settlement fields are wrong/missing.
+     *
+     * For own-credentials owners it also REPAIRS a wrongly-stamped
+     * settle_expected_at (clears it + marks settled) so koalabotbe's T+24h
+     * settlement cron cannot double-credit their platform balance. Decision is
+     * delegated to the pure resolveSettlementRepair() helper.
+     *
+     * Idempotent — atomic conditional update; no-op when already correct or not
+     * eligible (SINGLE mode, balance/topup, missing paid_at, gateway unresolved).
      */
     async backfillSettlementIfMissing(transaction) {
         if (!modeService.isMultiMode()) return;
         if (!transaction.paid_at) return;
-        if (transaction.settle_expected_at) return;
-        if (transaction.is_settled) return;
-        if (transaction.settled_at) return;
         if (transaction.transaction_type !== 'product') return;
         if (transaction.payment_method_code === 'balance') return;
         if (!transaction.ownerId) return;
@@ -58,23 +60,14 @@ class WaPaymentTriggerService {
             return;
         }
 
-        const paidDate = transaction.paid_at instanceof Date
-            ? transaction.paid_at
-            : new Date(transaction.paid_at);
-
-        const settlementFields = useOwnCredentials
-            ? { is_settled: true, settled_at: paidDate }
-            : { settle_expected_at: new Date(paidDate.getTime() + ONE_DAY_MS) };
-
-        const filter = useOwnCredentials
-            ? { transactionId: transaction.transactionId, is_settled: { $ne: true } }
-            : { transactionId: transaction.transactionId, settle_expected_at: null };
+        const repair = resolveSettlementRepair(transaction, useOwnCredentials);
+        if (!repair) return;
 
         try {
-            const result = await TransactionModel.updateOne(filter, { $set: settlementFields });
+            const result = await TransactionModel.updateOne(repair.filter, { $set: repair.update });
             if (result.modifiedCount > 0) {
-                Object.assign(transaction, settlementFields);
-                console.log(clc.green.bold('[ API ]') + ` Settlement backfilled for ${transaction.transactionId}: ${JSON.stringify(settlementFields)}`);
+                Object.assign(transaction, repair.update);
+                console.log(clc.green.bold('[ API ]') + ` Settlement reconciled for ${transaction.transactionId}: ${JSON.stringify(repair.update)}`);
             }
         } catch (updateErr) {
             console.warn(clc.yellow.bold('[ API WARN ]') + ` Settlement backfill update failed for ${transaction.transactionId}: ${updateErr.message}`);

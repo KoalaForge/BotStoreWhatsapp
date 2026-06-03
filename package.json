@@ -5,7 +5,8 @@
   "type": "commonjs",
   "description": "WhatsApp e-commerce bot powered by Baileys - Clone of OrkutTelegram5.0",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "jest"
   },
   "engines": {
     "node": ">=20.0.0"
