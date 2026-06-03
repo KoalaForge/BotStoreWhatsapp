@@ -28,6 +28,12 @@ const RAW_FORWARD_BLACKLIST = new Set([
     'messaging-history.set'
 ]);
 
+// Watchdog: force a WS restart only when the socket is NOT genuinely open but
+// _state is still stale 'connected' (the half-open/zombie window before
+// connection.update('close') fires). A truly-open-but-quiet socket is left
+// alone — Baileys' own keepalive is the liveness detector. Env-tunable.
+const WD_IDLE_MS = Number(process.env.WA_WATCHDOG_IDLE_MS) || 120_000;
+
 // Realistic browser fingerprints — picked at random per connection
 const BROWSER_PROFILES = [
     ['Windows', 'Chrome', '131.0.6778.86'],
@@ -107,6 +113,13 @@ class WaConnection extends EventEmitter {
         // state=connected. Updated by every relevant event.
         this._lastEventAt = 0;
         this._watchdogInterval = null;
+        // Creds persistence guard: when a creds.update can't be saved (Mongo
+        // flap), mark dirty + keep reflushing in the background until it
+        // sticks, and gate reconnect on it so we never re-handshake a stale
+        // session (→ code 405 desync loop). _credsFlushChain serializes saves.
+        this._credsDirty = false;
+        this._credsReflushTimer = null;
+        this._credsFlushChain = Promise.resolve();
         // Session purge handle, captured from useMongoAuthState() in start().
         this._purgePeerSession = null;
         // Throttle decrypt-failure logs per peer so a single desynced peer in
@@ -367,9 +380,18 @@ class WaConnection extends EventEmitter {
             try {
                 this._pruneCaches();
                 if (this._state !== 'connected') return;
+                // WS genuinely open → healthy, just quiet (normal for
+                // low-traffic DM bots). Baileys' own keepalive detects a truly
+                // dead socket and fires connection.update('close'). Skip the
+                // churn-restart here. Trade-off: a rare zombie where readyState
+                // stays 1 while the server silently stops responding relies on
+                // Baileys' keepalive query, not this watchdog.
+                if (this.sock?.ws?.readyState === 1) return;
+                // WS not open but _state still 'connected' → stale/half-open
+                // zombie; connection.update hasn't fired yet. Force reconnect.
                 const idle = Date.now() - this._lastEventAt;
-                if (idle > 5 * 60_000) {
-                    log('WARN', `Watchdog: bot ${this.botId} idle ${Math.round(idle / 1000)}s while state=connected — forcing WS restart.`);
+                if (idle > WD_IDLE_MS) {
+                    log('WARN', `Watchdog: bot ${this.botId} idle ${Math.round(idle / 1000)}s, ws not open (readyState=${this.sock?.ws?.readyState}) — forcing WS restart.`);
                     this._emit('watchdog_restart', { idle_ms: idle });
                     try {
                         if (this.sock?.ws?.close) this.sock.ws.close();
@@ -387,6 +409,46 @@ class WaConnection extends EventEmitter {
             clearInterval(this._watchdogInterval);
             this._watchdogInterval = null;
         }
+        if (this._credsReflushTimer) {
+            clearTimeout(this._credsReflushTimer);
+            this._credsReflushTimer = null;
+        }
+    }
+
+    // ── Creds persistence guard ──────────────────────────────────────────────
+    // Single-flight save: chains each flush after the previous so a later
+    // creds.update can't be clobbered by an older in-flight save resolving late.
+    _flushCreds() {
+        this._credsFlushChain = this._credsFlushChain
+            .catch(() => {})
+            .then(() => this._saveCreds());
+        return this._credsFlushChain;
+    }
+
+    // Background reflush: keep retrying the save with capped backoff until the
+    // creds finally persist (covers multi-minute Mongo outages). Idempotent —
+    // a no-op if nothing is dirty or a reflush is already scheduled.
+    _scheduleCredsReflush() {
+        if (this._credsReflushTimer || !this._credsDirty) return;
+        let attempt = 0;
+        const tick = async () => {
+            this._credsReflushTimer = null;
+            if (!this._credsDirty) return;
+            if (this._state === 'logged_out') return; // identity gone, nothing to persist
+            attempt++;
+            try {
+                await this._flushCreds();
+                this._credsDirty = false;
+                log('INFO', `Creds reflush ok for bot ${this.botId} after ${attempt} attempt(s).`);
+            } catch (err) {
+                const delay = Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
+                log('WARN', `Creds reflush attempt ${attempt} failed for bot ${this.botId}: ${err.message} — retry in ${Math.round(delay / 1000)}s.`);
+                this._credsReflushTimer = setTimeout(tick, delay);
+                this._credsReflushTimer.unref?.();
+            }
+        };
+        this._credsReflushTimer = setTimeout(tick, 1_000);
+        this._credsReflushTimer.unref?.();
     }
     _pruneCaches() {
         // Retry counter entries are tiny but unbounded over time. Cap by size.
@@ -533,6 +595,19 @@ class WaConnection extends EventEmitter {
      * Internal: create the Baileys socket and bind events.
      */
     async _connect(options = {}) {
+        // Don't hand WhatsApp a stale session: if the last creds.update never
+        // persisted (Mongo flap), flush before re-handshaking. Handshaking with
+        // un-persisted advanced creds risks a code 405 desync loop.
+        if (this._credsDirty) {
+            try {
+                await this._flushCreds();
+                this._credsDirty = false;
+            } catch (err) {
+                log('WARN', `Creds un-persisted for bot ${this.botId} (${err.message}) — delaying reconnect 5s to avoid 405 desync.`);
+                setTimeout(() => this._connect(options), 5_000);
+                return;
+            }
+        }
         const baileys = await loadBaileys();
         const makeWASocket = baileys.default || baileys.makeWASocket;
         const { DisconnectReason, fetchLatestBaileysVersion, WAMessageStubType, makeCacheableSignalKeyStore } = baileys;
@@ -858,8 +933,13 @@ class WaConnection extends EventEmitter {
         // -- Credential update (save to MongoDB) --
         this.sock.ev.on('creds.update', async () => {
             this._touchEvent();
-            try { await this._saveCreds(); } catch (err) {
-                log('ERROR', `Failed to save creds for bot ${this.botId}: ${err.message}`);
+            this._credsDirty = true;
+            try {
+                await this._flushCreds();
+                this._credsDirty = false;
+            } catch (err) {
+                log('ERROR', `Failed to save creds for bot ${this.botId}: ${err.message} — scheduling reflush.`);
+                this._scheduleCredsReflush();
             }
         });
 
