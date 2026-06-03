@@ -333,19 +333,33 @@ class WaCtx {
     }
 
     /**
-     * Resolve this bot's socket once it is OPEN (ws.readyState === 1), polling
-     * the live `sock` getter so a reconnect mid-send is picked up. Returns the
-     * open socket, or null if none became ready within maxMs.
+     * Whether `sock` has an OPEN WebSocket. Baileys wraps the socket in a
+     * WebSocketClient that exposes `.isOpen` (getter), NOT a raw `.readyState`
+     * — so check `isOpen` first and fall back to a raw `readyState === 1` for
+     * any non-wrapped socket impl.
+     * @private
+     */
+    _sockIsOpen(sock = this.sock) {
+        const ws = sock?.ws;
+        if (!ws) return false;
+        if (typeof ws.isOpen === 'boolean') return ws.isOpen;
+        return ws.readyState === 1;
+    }
+
+    /**
+     * Resolve this bot's socket once its WebSocket is OPEN, polling the live
+     * `sock` getter so a reconnect mid-send is picked up. Returns the open
+     * socket, or null if none became ready within maxMs.
      * @private
      */
     async _waitForOpenSock(maxMs = 12_000) {
-        if (this.sock?.ws?.readyState === 1) return this.sock;
+        if (this._sockIsOpen()) return this.sock;
         const deadline = Date.now() + maxMs;
         while (Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 250));
-            if (this.sock?.ws?.readyState === 1) return this.sock;
+            if (this._sockIsOpen()) return this.sock;
         }
-        return this.sock?.ws?.readyState === 1 ? this.sock : null;
+        return this._sockIsOpen() ? this.sock : null;
     }
 
     /**
@@ -586,7 +600,7 @@ class WaCtx {
         const sock = this.sock;
         // Best-effort, never block the reply: skip when no open socket, and
         // bound the receipt send so a half-open socket can't hang the handler.
-        if (sock?.ws?.readyState !== 1) return;
+        if (!this._sockIsOpen(sock)) return;
         await this._withTimeout(sock.readMessages([this.messageKey]), 8_000, 'readMessages');
     }
 
@@ -596,7 +610,7 @@ class WaCtx {
      */
     async sendTyping() {
         const sock = this.sock;
-        if (sock?.ws?.readyState !== 1) return; // no open socket — skip presence
+        if (!this._sockIsOpen(sock)) return; // no open socket — skip presence
         await sock.presenceSubscribe(this.chat);
         await sock.sendPresenceUpdate('composing', this.chat);
     }
@@ -607,7 +621,7 @@ class WaCtx {
      */
     async stopTyping() {
         const sock = this.sock;
-        if (sock?.ws?.readyState !== 1) return;
+        if (!this._sockIsOpen(sock)) return;
         await sock.sendPresenceUpdate('paused', this.chat);
     }
 
