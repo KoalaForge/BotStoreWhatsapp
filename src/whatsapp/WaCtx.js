@@ -20,8 +20,15 @@ class WaCtx {
      * @param {Object} msg - Baileys message object
      * @param {string} botId - MongoDB bot ID (null for SINGLE mode)
      */
-    constructor(sock, msg, botId = null) {
-        this.sock = sock;
+    constructor(sock, msg, botId = null, conn = null) {
+        // Resolve the bot's CURRENT socket via the WaConnection when available
+        // (see the `sock` getter). A handler that started before a reconnect /
+        // watchdog restart must send on the NEW socket — the connection swaps
+        // its `.sock` to a fresh instance and a captured reference would point
+        // at the dead one, hanging every send. Falls back to the passed socket
+        // for legacy callers / tests that don't thread the connection.
+        this._conn = conn || null;
+        this._initialSock = sock;
         this._rawMessage = msg;
         this._botId = botId;
 
@@ -47,6 +54,16 @@ class WaCtx {
         // target the user's DM JID while preserving the original message.
         this._chatOverride = null;
         this._originGroupJid = null;
+    }
+
+    /**
+     * Live Baileys socket for this bot. Resolves the WaConnection's current
+     * `.sock` so sends / receipts / presence follow a reconnect instead of
+     * targeting a dead socket. Falls back to the socket captured at construction
+     * when no connection was threaded in (legacy callers, unit tests).
+     */
+    get sock() {
+        return (this._conn && this._conn.sock) || this._initialSock;
     }
 
     // ==========================================
@@ -245,24 +262,31 @@ class WaCtx {
     async _sendWithRetry(jid, content, options = {}, maxRetries = 1) {
         let lastErr;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            // Pre-flight readiness check: if the socket isn't OPEN, wait a
-            // bit for reconnect before throwing. ws.readyState === 1 → OPEN.
-            const ws = this.sock?.ws;
-            if (!this.sock || (ws && ws.readyState !== 1)) {
-                await new Promise(r => setTimeout(r, 1500));
+            // Resolve an OPEN socket before sending. _waitForOpenSock re-reads
+            // the live `sock` getter on every poll, so a reconnect/watchdog
+            // restart that swaps the socket mid-handling is picked up here —
+            // the reply lands on the NEW socket instead of a dead one.
+            const sock = await this._waitForOpenSock(12_000);
+            if (!sock) {
+                // Reconnect hasn't landed yet — treat as transient so the retry
+                // waits again, rather than calling send() on a dead/null sock.
+                lastErr = new Error('Connection Closed: no open socket');
+                if (attempt === maxRetries) throw lastErr;
+                await new Promise(r => setTimeout(r, 1500 + attempt * 2000));
+                continue;
             }
             // Keep the watchdog quiet: an outgoing send in progress counts as
             // activity. Without this, a long send to a 1000-member group
             // (USync + fanout encrypt) can stretch past the watchdog idle
             // threshold and trip a false WS restart mid-send.
-            this.sock?._touchEvent?.();
+            sock._touchEvent?.();
             // Settle grace: server-side device slot needs ~2s to finish
             // registering after `connection: 'open'`. Sending earlier can
             // hit 428 "Connection Closed" mid-flight. WaConnection stamps
             // `sock._openedAt` on every open — sleep the remainder. Was 8s
             // historically; that overshoots on healthy networks and stacks
             // with retry × storm gate to cause multi-minute user hangs.
-            const openedAt = this.sock?._openedAt;
+            const openedAt = sock._openedAt;
             if (openedAt && Date.now() - openedAt < 2000) {
                 const wait = 2000 - (Date.now() - openedAt);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
@@ -274,13 +298,21 @@ class WaCtx {
             // GROUP sends only: storm is many-peers libsignal churn, so DM
             // sends to a single peer can proceed without waiting.
             const isGroupSend = typeof jid === 'string' && jid.endsWith('@g.us');
-            const stormUntil = this.sock?._sessionStormUntil;
+            const stormUntil = sock._sessionStormUntil;
             if (stormUntil && Date.now() < stormUntil && isGroupSend) {
                 const wait = Math.min(stormUntil - Date.now(), 8000);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }
             try {
-                return await this.sock.sendMessage(jid, content, options);
+                // Hard timeout BELOW Baileys' 25s ACK wait (defaultQueryTimeoutMs)
+                // so a half-open socket that silently buffers the write can't
+                // hang the handler — the user sees "typing forever" otherwise.
+                // A timeout is transient → the retry re-waits for an open socket.
+                return await this._withTimeout(
+                    sock.sendMessage(jid, content, options),
+                    20_000,
+                    'sendMessage'
+                );
             } catch (err) {
                 lastErr = err;
                 const errMsg = err?.message || '';
@@ -298,6 +330,37 @@ class WaCtx {
             }
         }
         throw lastErr;
+    }
+
+    /**
+     * Resolve this bot's socket once it is OPEN (ws.readyState === 1), polling
+     * the live `sock` getter so a reconnect mid-send is picked up. Returns the
+     * open socket, or null if none became ready within maxMs.
+     * @private
+     */
+    async _waitForOpenSock(maxMs = 12_000) {
+        if (this.sock?.ws?.readyState === 1) return this.sock;
+        const deadline = Date.now() + maxMs;
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 250));
+            if (this.sock?.ws?.readyState === 1) return this.sock;
+        }
+        return this.sock?.ws?.readyState === 1 ? this.sock : null;
+    }
+
+    /**
+     * Reject if `promise` doesn't settle within `ms`. Bounds Baileys sends that
+     * can buffer-and-wait on a half-open socket. The rejection message includes
+     * "Timed Out" so callers treat it as a transient (retryable) error.
+     * @private
+     */
+    _withTimeout(promise, ms, label = 'operation') {
+        let timer;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Timed Out: ${label}`)), ms);
+            if (typeof timer.unref === 'function') timer.unref();
+        });
+        return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
     }
 
     /**
@@ -520,7 +583,11 @@ class WaCtx {
      * @returns {Promise<void>}
      */
     async markRead() {
-        await this.sock.readMessages([this.messageKey]);
+        const sock = this.sock;
+        // Best-effort, never block the reply: skip when no open socket, and
+        // bound the receipt send so a half-open socket can't hang the handler.
+        if (sock?.ws?.readyState !== 1) return;
+        await this._withTimeout(sock.readMessages([this.messageKey]), 8_000, 'readMessages');
     }
 
     /**
@@ -528,8 +595,10 @@ class WaCtx {
      * @returns {Promise<void>}
      */
     async sendTyping() {
-        await this.sock.presenceSubscribe(this.chat);
-        await this.sock.sendPresenceUpdate('composing', this.chat);
+        const sock = this.sock;
+        if (sock?.ws?.readyState !== 1) return; // no open socket — skip presence
+        await sock.presenceSubscribe(this.chat);
+        await sock.sendPresenceUpdate('composing', this.chat);
     }
 
     /**
@@ -537,7 +606,9 @@ class WaCtx {
      * @returns {Promise<void>}
      */
     async stopTyping() {
-        await this.sock.sendPresenceUpdate('paused', this.chat);
+        const sock = this.sock;
+        if (sock?.ws?.readyState !== 1) return;
+        await sock.sendPresenceUpdate('paused', this.chat);
     }
 
     /**
@@ -565,7 +636,8 @@ class WaCtx {
         // Using `toJid(this.from)` would strip the @lid suffix and produce a
         // bogus @s.whatsapp.net JID — Baileys then drops the send silently.
         const dmJid = this.jid;
-        const clone = new WaCtx(this.sock, this._rawMessage, this._botId);
+        // Thread the connection so the clone also resolves the LIVE socket.
+        const clone = new WaCtx(this._initialSock, this._rawMessage, this._botId, this._conn);
         clone.state = this.state;
         clone.repositoryContext = this.repositoryContext;
         clone.pricingService = this.pricingService;
