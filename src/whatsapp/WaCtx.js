@@ -54,10 +54,33 @@ class WaCtx {
     // ==========================================
 
     /**
+     * Resolve a `@lid` JID to its phone JID (`628xxx@s.whatsapp.net`).
+     *
+     * Baileys 6.7.x has NO LID↔PN mapping store and no `*Alt` fields — the
+     * ONLY phone source is the inbound stanza's `sender_pn` / `participant_pn`
+     * (exposed as key.senderPn / key.participantPn). Sending to a raw `@lid`
+     * fails silently in 6.7.x: the bot's signal session is PN-based (paired
+     * pre-LID + inbound decrypted via PN identity), so encrypting to the `@lid`
+     * identity produces an undeliverable/undecryptable message. The recipient
+     * sees the typing indicator (presence routes by LID) but never the reply.
+     *
+     * @param {string} lidJid - a `xxx@lid` JID
+     * @param {string} [pnHint] - key.senderPn or key.participantPn
+     * @returns {string|null} `628xxx@s.whatsapp.net`, or null if unresolvable
+     * @private
+     */
+    _lidToPn(lidJid, pnHint) {
+        if (!lidJid || !String(lidJid).endsWith('@lid')) return null;
+        if (!pnHint) return null;
+        const user = String(pnHint).split('@')[0].split(':')[0];
+        return user ? `${user}@s.whatsapp.net` : null;
+    }
+
+    /**
      * Full JID of the sender (for mentions, sendTo).
-     * - DM: same as remoteJid.
-     * - Group: key.participant is the sender JID (preferring participantAlt
-     *   when participant is `@lid`).
+     * - DM: remoteJid, resolved to the phone JID when `@lid`-addressed.
+     * - Group: key.participant is the sender JID (resolved to phone via
+     *   participantAlt/participantPn when participant is `@lid`).
      * - Cloned-to-DM ctx: returns the override DM JID.
      */
     get jid() {
@@ -66,12 +89,16 @@ class WaCtx {
         const remote = key.remoteJid || '';
         if (remote.endsWith('@g.us')) {
             const part = key.participant || '';
-            if (part.endsWith('@lid') && key.participantAlt) {
-                return String(key.participantAlt);
+            if (part.endsWith('@lid')) {
+                if (key.participantAlt) return String(key.participantAlt);
+                const pn = this._lidToPn(part, key.participantPn);
+                if (pn) return pn;
             }
             return part || remote;
         }
-        return remote;
+        // DM: send target must be the phone JID, not the @lid (6.7.x can't
+        // deliver to @lid). Falls back to raw remote when senderPn is absent.
+        return this._lidToPn(remote, key.senderPn) || remote;
     }
 
     /**
@@ -102,10 +129,14 @@ class WaCtx {
         return remote.split('@')[0].split(':')[0];
     }
 
-    /** Chat JID — full JID needed by sock.sendMessage() */
+    /** Chat JID — full JID needed by sock.sendMessage(). For `@lid`-addressed
+     *  DMs, resolves to the phone JID via key.senderPn so the reply actually
+     *  delivers (see _lidToPn). Group chats (`@g.us`) pass through unchanged. */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        return this._rawMessage.key.remoteJid;
+        const key = this._rawMessage.key || {};
+        const remote = key.remoteJid || '';
+        return this._lidToPn(remote, key.senderPn) || remote;
     }
 
     /**
