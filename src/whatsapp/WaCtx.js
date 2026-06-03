@@ -105,7 +105,22 @@ class WaCtx {
     /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        return this._rawMessage.key.remoteJid;
+        const key = this._rawMessage.key || {};
+        const remote = key.remoteJid || '';
+
+        // Groups: send to the group JID as-is.
+        if (remote.endsWith('@g.us')) return remote;
+
+        // DM: Baileys can't deliver to a raw `@lid` (signal session is
+        // PN-based) — the send fails silently and the user is stuck on
+        // "typing forever, no reply". Resolve to the phone JID via
+        // remoteJidAlt (v7+) or senderPn (v6.7), mirroring the `from`/`jid`
+        // getters. Presence/typing route fine to the PN too.
+        if (remote.endsWith('@lid')) {
+            return key.remoteJidAlt || key.senderPn || remote;
+        }
+
+        return remote;
     }
 
     /**
