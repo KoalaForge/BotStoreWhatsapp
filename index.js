@@ -98,10 +98,8 @@ async function runSingleMode() {
     const router = setupWhatsApp(null);
 
     // Message handler: wraps incoming messages in WaCtx and routes them
-    const handleMessage = async (sock, msg, botId, conn) => {
-        // `conn` is the WaConnection — threaded so WaCtx resolves the LIVE
-        // socket and an in-flight reply survives a mid-handling reconnect.
-        const ctx = new WaCtx(sock, msg, botId, conn);
+    const handleMessage = async (sock, msg, botId) => {
+        const ctx = new WaCtx(sock, msg, botId);
 
         // Early filter: in groups, drop only short noise (<4 chars) that
         // can't be dot-command nor numeric pick nor auto-suggest candidate.
@@ -127,7 +125,7 @@ async function runSingleMode() {
             // Digital-Store-Assistant's lean architecture which responds fast
             // in 1000-member groups. DM keeps the read receipt.
             if (!ctx.isGroup) {
-                ctx.markRead().catch(() => {});
+                await ctx.markRead();
             }
             await router.route(ctx);
         } catch (err) {
@@ -384,7 +382,7 @@ async function runMultiMode() {
     const setupWhatsAppFn = require('./src/config/waSetup');
 
     // Set global message handler
-    WaBotManager.setMessageHandler(async (sock, msg, botId, conn) => {
+    WaBotManager.setMessageHandler(async (sock, msg, botId) => {
         // Each bot gets its own router for botId-scoped middleware
         // Cache routers to avoid re-creation on every message
         if (!WaBotManager._routers) WaBotManager._routers = new Map();
@@ -395,9 +393,7 @@ async function runMultiMode() {
             WaBotManager._routers.set(botId, router);
         }
 
-        // `conn` is the WaConnection — threaded so WaCtx resolves the LIVE
-        // socket and an in-flight reply survives a mid-handling reconnect.
-        const ctx = new WaCtx(sock, msg, botId, conn);
+        const ctx = new WaCtx(sock, msg, botId);
 
         // Early filter: in groups, drop only short noise (<4 chars) that
         // can't be dot-command nor numeric pick nor auto-suggest candidate.
@@ -421,10 +417,9 @@ async function runMultiMode() {
             // queues behind heavy group ops (1000-member sender-key fanout).
             // Stripping it lets group commands route immediately, matching
             // Digital-Store-Assistant's lean architecture which responds fast
-            // in 1000-member groups. DM keeps the read receipt — fire-and-forget
-            // so a hung/half-open receipt never blocks routing the reply.
+            // in 1000-member groups. DM keeps the read receipt.
             if (!ctx.isGroup) {
-                ctx.markRead().catch(() => {});
+                await ctx.markRead();
             }
             await router.route(ctx);
         } catch (err) {

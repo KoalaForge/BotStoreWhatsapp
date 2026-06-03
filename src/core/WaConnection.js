@@ -926,10 +926,7 @@ class WaConnection extends EventEmitter {
 
                 try {
                     if (this.onMessage) {
-                        // Pass `this` (the connection) so WaCtx can resolve the
-                        // LIVE socket — a handler that outlives a reconnect then
-                        // sends on the new socket instead of this dead one.
-                        await this.onMessage(this.sock, msg, this.botId, this);
+                        await this.onMessage(this.sock, msg, this.botId);
                     }
                 } catch (err) {
                     log('ERROR', `Error handling message for bot ${this.botId}: ${err.message}`);

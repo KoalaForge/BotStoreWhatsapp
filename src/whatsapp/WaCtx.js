@@ -20,15 +20,8 @@ class WaCtx {
      * @param {Object} msg - Baileys message object
      * @param {string} botId - MongoDB bot ID (null for SINGLE mode)
      */
-    constructor(sock, msg, botId = null, conn = null) {
-        // Resolve the bot's CURRENT socket via the WaConnection when available
-        // (see the `sock` getter). A handler that started before a reconnect /
-        // watchdog restart must send on the NEW socket — the connection swaps
-        // its `.sock` to a fresh instance and a captured reference would point
-        // at the dead one, hanging every send. Falls back to the passed socket
-        // for legacy callers / tests that don't thread the connection.
-        this._conn = conn || null;
-        this._initialSock = sock;
+    constructor(sock, msg, botId = null) {
+        this.sock = sock;
         this._rawMessage = msg;
         this._botId = botId;
 
@@ -56,48 +49,15 @@ class WaCtx {
         this._originGroupJid = null;
     }
 
-    /**
-     * Live Baileys socket for this bot. Resolves the WaConnection's current
-     * `.sock` so sends / receipts / presence follow a reconnect instead of
-     * targeting a dead socket. Falls back to the socket captured at construction
-     * when no connection was threaded in (legacy callers, unit tests).
-     */
-    get sock() {
-        return (this._conn && this._conn.sock) || this._initialSock;
-    }
-
     // ==========================================
     // Identity Properties
     // ==========================================
 
     /**
-     * Resolve a `@lid` JID to its phone JID (`628xxx@s.whatsapp.net`).
-     *
-     * Baileys 6.7.x has NO LID↔PN mapping store and no `*Alt` fields — the
-     * ONLY phone source is the inbound stanza's `sender_pn` / `participant_pn`
-     * (exposed as key.senderPn / key.participantPn). Sending to a raw `@lid`
-     * fails silently in 6.7.x: the bot's signal session is PN-based (paired
-     * pre-LID + inbound decrypted via PN identity), so encrypting to the `@lid`
-     * identity produces an undeliverable/undecryptable message. The recipient
-     * sees the typing indicator (presence routes by LID) but never the reply.
-     *
-     * @param {string} lidJid - a `xxx@lid` JID
-     * @param {string} [pnHint] - key.senderPn or key.participantPn
-     * @returns {string|null} `628xxx@s.whatsapp.net`, or null if unresolvable
-     * @private
-     */
-    _lidToPn(lidJid, pnHint) {
-        if (!lidJid || !String(lidJid).endsWith('@lid')) return null;
-        if (!pnHint) return null;
-        const user = String(pnHint).split('@')[0].split(':')[0];
-        return user ? `${user}@s.whatsapp.net` : null;
-    }
-
-    /**
      * Full JID of the sender (for mentions, sendTo).
-     * - DM: remoteJid, resolved to the phone JID when `@lid`-addressed.
-     * - Group: key.participant is the sender JID (resolved to phone via
-     *   participantAlt/participantPn when participant is `@lid`).
+     * - DM: same as remoteJid.
+     * - Group: key.participant is the sender JID (preferring participantAlt
+     *   when participant is `@lid`).
      * - Cloned-to-DM ctx: returns the override DM JID.
      */
     get jid() {
@@ -106,16 +66,12 @@ class WaCtx {
         const remote = key.remoteJid || '';
         if (remote.endsWith('@g.us')) {
             const part = key.participant || '';
-            if (part.endsWith('@lid')) {
-                if (key.participantAlt) return String(key.participantAlt);
-                const pn = this._lidToPn(part, key.participantPn);
-                if (pn) return pn;
+            if (part.endsWith('@lid') && key.participantAlt) {
+                return String(key.participantAlt);
             }
             return part || remote;
         }
-        // DM: send target must be the phone JID, not the @lid (6.7.x can't
-        // deliver to @lid). Falls back to raw remote when senderPn is absent.
-        return this._lidToPn(remote, key.senderPn) || remote;
+        return remote;
     }
 
     /**
@@ -146,14 +102,10 @@ class WaCtx {
         return remote.split('@')[0].split(':')[0];
     }
 
-    /** Chat JID — full JID needed by sock.sendMessage(). For `@lid`-addressed
-     *  DMs, resolves to the phone JID via key.senderPn so the reply actually
-     *  delivers (see _lidToPn). Group chats (`@g.us`) pass through unchanged. */
+    /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        const key = this._rawMessage.key || {};
-        const remote = key.remoteJid || '';
-        return this._lidToPn(remote, key.senderPn) || remote;
+        return this._rawMessage.key.remoteJid;
     }
 
     /**
@@ -262,31 +214,24 @@ class WaCtx {
     async _sendWithRetry(jid, content, options = {}, maxRetries = 1) {
         let lastErr;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            // Resolve an OPEN socket before sending. _waitForOpenSock re-reads
-            // the live `sock` getter on every poll, so a reconnect/watchdog
-            // restart that swaps the socket mid-handling is picked up here —
-            // the reply lands on the NEW socket instead of a dead one.
-            const sock = await this._waitForOpenSock(12_000);
-            if (!sock) {
-                // Reconnect hasn't landed yet — treat as transient so the retry
-                // waits again, rather than calling send() on a dead/null sock.
-                lastErr = new Error('Connection Closed: no open socket');
-                if (attempt === maxRetries) throw lastErr;
-                await new Promise(r => setTimeout(r, 1500 + attempt * 2000));
-                continue;
+            // Pre-flight readiness check: if the socket isn't OPEN, wait a
+            // bit for reconnect before throwing. ws.readyState === 1 → OPEN.
+            const ws = this.sock?.ws;
+            if (!this.sock || (ws && ws.readyState !== 1)) {
+                await new Promise(r => setTimeout(r, 1500));
             }
             // Keep the watchdog quiet: an outgoing send in progress counts as
             // activity. Without this, a long send to a 1000-member group
             // (USync + fanout encrypt) can stretch past the watchdog idle
             // threshold and trip a false WS restart mid-send.
-            sock._touchEvent?.();
+            this.sock?._touchEvent?.();
             // Settle grace: server-side device slot needs ~2s to finish
             // registering after `connection: 'open'`. Sending earlier can
             // hit 428 "Connection Closed" mid-flight. WaConnection stamps
             // `sock._openedAt` on every open — sleep the remainder. Was 8s
             // historically; that overshoots on healthy networks and stacks
             // with retry × storm gate to cause multi-minute user hangs.
-            const openedAt = sock._openedAt;
+            const openedAt = this.sock?._openedAt;
             if (openedAt && Date.now() - openedAt < 2000) {
                 const wait = 2000 - (Date.now() - openedAt);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
@@ -298,21 +243,13 @@ class WaCtx {
             // GROUP sends only: storm is many-peers libsignal churn, so DM
             // sends to a single peer can proceed without waiting.
             const isGroupSend = typeof jid === 'string' && jid.endsWith('@g.us');
-            const stormUntil = sock._sessionStormUntil;
+            const stormUntil = this.sock?._sessionStormUntil;
             if (stormUntil && Date.now() < stormUntil && isGroupSend) {
                 const wait = Math.min(stormUntil - Date.now(), 8000);
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }
             try {
-                // Hard timeout BELOW Baileys' 25s ACK wait (defaultQueryTimeoutMs)
-                // so a half-open socket that silently buffers the write can't
-                // hang the handler — the user sees "typing forever" otherwise.
-                // A timeout is transient → the retry re-waits for an open socket.
-                return await this._withTimeout(
-                    sock.sendMessage(jid, content, options),
-                    20_000,
-                    'sendMessage'
-                );
+                return await this.sock.sendMessage(jid, content, options);
             } catch (err) {
                 lastErr = err;
                 const errMsg = err?.message || '';
@@ -330,51 +267,6 @@ class WaCtx {
             }
         }
         throw lastErr;
-    }
-
-    /**
-     * Whether `sock` has an OPEN WebSocket. Baileys wraps the socket in a
-     * WebSocketClient that exposes `.isOpen` (getter), NOT a raw `.readyState`
-     * — so check `isOpen` first and fall back to a raw `readyState === 1` for
-     * any non-wrapped socket impl.
-     * @private
-     */
-    _sockIsOpen(sock = this.sock) {
-        const ws = sock?.ws;
-        if (!ws) return false;
-        if (typeof ws.isOpen === 'boolean') return ws.isOpen;
-        return ws.readyState === 1;
-    }
-
-    /**
-     * Resolve this bot's socket once its WebSocket is OPEN, polling the live
-     * `sock` getter so a reconnect mid-send is picked up. Returns the open
-     * socket, or null if none became ready within maxMs.
-     * @private
-     */
-    async _waitForOpenSock(maxMs = 12_000) {
-        if (this._sockIsOpen()) return this.sock;
-        const deadline = Date.now() + maxMs;
-        while (Date.now() < deadline) {
-            await new Promise(r => setTimeout(r, 250));
-            if (this._sockIsOpen()) return this.sock;
-        }
-        return this._sockIsOpen() ? this.sock : null;
-    }
-
-    /**
-     * Reject if `promise` doesn't settle within `ms`. Bounds Baileys sends that
-     * can buffer-and-wait on a half-open socket. The rejection message includes
-     * "Timed Out" so callers treat it as a transient (retryable) error.
-     * @private
-     */
-    _withTimeout(promise, ms, label = 'operation') {
-        let timer;
-        const timeout = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`Timed Out: ${label}`)), ms);
-            if (typeof timer.unref === 'function') timer.unref();
-        });
-        return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
     }
 
     /**
@@ -597,11 +489,7 @@ class WaCtx {
      * @returns {Promise<void>}
      */
     async markRead() {
-        const sock = this.sock;
-        // Best-effort, never block the reply: skip when no open socket, and
-        // bound the receipt send so a half-open socket can't hang the handler.
-        if (!this._sockIsOpen(sock)) return;
-        await this._withTimeout(sock.readMessages([this.messageKey]), 8_000, 'readMessages');
+        await this.sock.readMessages([this.messageKey]);
     }
 
     /**
@@ -609,10 +497,8 @@ class WaCtx {
      * @returns {Promise<void>}
      */
     async sendTyping() {
-        const sock = this.sock;
-        if (!this._sockIsOpen(sock)) return; // no open socket — skip presence
-        await sock.presenceSubscribe(this.chat);
-        await sock.sendPresenceUpdate('composing', this.chat);
+        await this.sock.presenceSubscribe(this.chat);
+        await this.sock.sendPresenceUpdate('composing', this.chat);
     }
 
     /**
@@ -620,9 +506,7 @@ class WaCtx {
      * @returns {Promise<void>}
      */
     async stopTyping() {
-        const sock = this.sock;
-        if (!this._sockIsOpen(sock)) return;
-        await sock.sendPresenceUpdate('paused', this.chat);
+        await this.sock.sendPresenceUpdate('paused', this.chat);
     }
 
     /**
@@ -650,8 +534,7 @@ class WaCtx {
         // Using `toJid(this.from)` would strip the @lid suffix and produce a
         // bogus @s.whatsapp.net JID — Baileys then drops the send silently.
         const dmJid = this.jid;
-        // Thread the connection so the clone also resolves the LIVE socket.
-        const clone = new WaCtx(this._initialSock, this._rawMessage, this._botId, this._conn);
+        const clone = new WaCtx(this.sock, this._rawMessage, this._botId);
         clone.state = this.state;
         clone.repositoryContext = this.repositoryContext;
         clone.pricingService = this.pricingService;
