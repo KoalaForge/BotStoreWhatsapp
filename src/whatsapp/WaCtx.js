@@ -105,25 +105,14 @@ class WaCtx {
     /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        const key = this._rawMessage.key || {};
-        const remote = key.remoteJid || '';
-
-        // Groups: send to the group JID as-is.
-        if (remote.endsWith('@g.us')) return remote;
-
-        // DM from an `@lid` sender: a raw `@lid` is NOT deliverable — Baileys
-        // ACCEPTS the send and returns a msgId, but WhatsApp silently drops it
-        // (runtime-confirmed via [SENDDBG]: send OK + msgId, zero delivery).
-        // Must address the phone JID. Baileys 6.7.21 exposes it as `senderPn`
-        // (e.g. 628xxx@s.whatsapp.net); prefer it, then remoteJidAlt (v7+),
-        // and only fall back to the raw `@lid` when no PN is available.
-        // (The earlier "@lid→PN respond-once-then-silent" was the watchdog
-        // 428 churn dropping sends — fixed separately — not the PN itself.)
-        if (remote.endsWith('@lid')) {
-            return key.senderPn || key.remoteJidAlt || remote;
-        }
-
-        return remote;
+        // Baileys 7.x has native LID support (LIDMappingStore + USync-by-lid +
+        // tctoken on 1:1 sends). Reply on the SAME JID the message arrived on —
+        // group @g.us, DM @lid, or DM PN. For an @lid sender, 7.x resolves the
+        // device list and the privacy token (tctoken) itself, so no manual
+        // @lid→PN rewrite is needed (that was a 6.7.x workaround that 7.x makes
+        // obsolete, and which never fixed the real error-463 reach-out lock).
+        // Identity/whitelist lookups live in `from`, which maps @lid→PN.
+        return this._rawMessage.key?.remoteJid || '';
     }
 
     /**
