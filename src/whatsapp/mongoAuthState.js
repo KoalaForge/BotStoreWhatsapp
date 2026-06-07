@@ -155,12 +155,21 @@ async function useMongoAuthState(botId) {
     // legacy Mongo session-* docs from pre-hybrid bots.
     async function purgePeerSession(jid) {
         if (!jid || typeof jid !== 'string') return 0;
-        const sanitized = sanitizeSegment(jid);
+        // On-disk session files are named `session-<user>.<device>.json`, where
+        // <user> is the bare signal-address user from jidDecode(jid).user (the
+        // digits before @ — e.g. `19830132449518` for `19830132449518@lid`).
+        // They contain NO `@`, so matching against the full sanitized JID (which
+        // keeps `@lid`/`@s.whatsapp.net`) never hit. Match on the bare user.
+        const user = sanitizeSegment(jid.split('@')[0].split(':')[0]);
+        if (!user) return 0;
         let deleted = 0;
         try {
             const entries = await fsp.readdir(keysDir);
             for (const name of entries) {
-                if (name.startsWith('session-') && name.includes(sanitized)) {
+                // `session-<user>.` — anchor on the user segment plus the device
+                // dot separator so a shorter number can't prefix-match a longer
+                // one (user `123` must not delete `session-1234.0.json`).
+                if (name.startsWith(`session-${user}.`)) {
                     await fsp.unlink(path.join(keysDir, name)).catch(() => {});
                     deleted += 1;
                 }

@@ -342,9 +342,11 @@ class WaConnection extends EventEmitter {
             return;
         }
 
-        // Purge real peer sessions (DM peers — `@s.whatsapp.net`). Includes
-        // group participants resolved above.
-        const isDm = typeof peerJid === 'string' && peerJid.endsWith('@s.whatsapp.net');
+        // Purge real peer sessions. DM peers arrive as `@s.whatsapp.net` OR
+        // `@lid` (LID-addressed DMs) — both key a pairwise signal session that
+        // can desync. Group participants resolved above also flow through here.
+        const isDm = typeof peerJid === 'string'
+            && (peerJid.endsWith('@s.whatsapp.net') || peerJid.endsWith('@lid'));
         if (isDm && entry.count >= 3 && this._purgePeerSession) {
             // Global rate-limit: even if many peers cross the threshold in
             // quick succession (catch-up wave on a large group), only fire

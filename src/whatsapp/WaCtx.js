@@ -105,22 +105,16 @@ class WaCtx {
     /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        const key = this._rawMessage.key || {};
-        const remote = key.remoteJid || '';
-
-        // Groups: send to the group JID as-is.
-        if (remote.endsWith('@g.us')) return remote;
-
-        // DM: Baileys can't deliver to a raw `@lid` (signal session is
-        // PN-based) — the send fails silently and the user is stuck on
-        // "typing forever, no reply". Resolve to the phone JID via
-        // remoteJidAlt (v7+) or senderPn (v6.7), mirroring the `from`/`jid`
-        // getters. Presence/typing route fine to the PN too.
-        if (remote.endsWith('@lid')) {
-            return key.remoteJidAlt || key.senderPn || remote;
-        }
-
-        return remote;
+        // Reply on the SAME JID the message arrived on (group @g.us, DM @lid
+        // or PN). Baileys 6.7.21 keys the inbound signal session to this exact
+        // address (libsignal jidToSignalProtocolAddress uses jidDecode().user
+        // verbatim — the bare LID number for an @lid). Do NOT rewrite DM
+        // `@lid`→PN: `remoteJidAlt` does not exist in 6.7.21 and `senderPn` is
+        // often absent, so the rewrite targets a PN with no session — libsignal
+        // throws "No sessions" and the send never delivers ("typing forever,
+        // no reply"). Identity/whitelist resolution lives in `from`, which
+        // still maps @lid→PN. See revert f289028 + fix beb6fcb.
+        return this._rawMessage.key?.remoteJid || '';
     }
 
     /**
@@ -271,6 +265,14 @@ class WaCtx {
                 const code = err?.output?.statusCode;
                 const transient = errMsg.includes('Connection Closed')
                     || errMsg.includes('Timed Out')
+                    // libsignal SessionError thrown when no pairwise session
+                    // exists for the target (peer re-keyed, or session gap
+                    // after a volume-less restart). sock.sendMessage runs
+                    // assertSessions which fetches a fresh prekey bundle, so a
+                    // single backoff retry usually succeeds rather than dropping
+                    // the reply. 'No session' substring also covers 'No sessions'.
+                    || errMsg.includes('No session')
+                    || errMsg.includes('No open session')
                     || code === 408
                     || code === 428
                     || code === 500
