@@ -105,14 +105,7 @@ class WaCtx {
     /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        // Reply on the SAME JID the message arrived on (group @g.us, DM @lid
-        // or PN). Baileys keyed the signal session to this exact address; do
-        // NOT rewrite DM `@lid`→PN here — that targets a different/empty
-        // session, so the send resolves but never delivers ("typing forever,
-        // no reply"). Identity resolution (DB lookups) lives in `from`, which
-        // still maps @lid→PN. See revert f289028: the @lid→PN reply rewrite
-        // made bots respond once then go silent in DM while groups kept working.
-        return this._rawMessage.key?.remoteJid || '';
+        return this._rawMessage.key.remoteJid;
     }
 
     /**
