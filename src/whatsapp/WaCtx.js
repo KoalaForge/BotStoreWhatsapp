@@ -258,11 +258,41 @@ class WaCtx {
                 if (wait > 0) await new Promise(r => setTimeout(r, wait));
             }
             try {
-                return await this.sock.sendMessage(jid, content, options);
+                const _res = await this.sock.sendMessage(jid, content, options);
+                // [SENDDBG] temporary instrumentation — confirms send resolved
+                // and to which JID. If this logs "OK" but the user gets nothing,
+                // the @lid outbound is accepted by Baileys but dropped by WA
+                // (need PN). Remove once the DM issue is root-caused.
+                try {
+                    const k = this._rawMessage?.key || {};
+                    console.log('[ SENDDBG ] send OK', {
+                        jid,
+                        attempt,
+                        msgId: _res?.key?.id || null,
+                        remoteJid: k.remoteJid || null,
+                        senderPn: k.senderPn || null,
+                        participantPn: k.participantPn || null
+                    });
+                } catch {}
+                return _res;
             } catch (err) {
                 lastErr = err;
                 const errMsg = err?.message || '';
                 const code = err?.output?.statusCode;
+                // [SENDDBG] temporary instrumentation — exact failure at the
+                // choke point. Remove once root-caused.
+                try {
+                    const k = this._rawMessage?.key || {};
+                    console.log('[ SENDDBG ] send FAIL', {
+                        jid,
+                        attempt,
+                        err: errMsg,
+                        code: code ?? null,
+                        name: err?.name || null,
+                        remoteJid: k.remoteJid || null,
+                        senderPn: k.senderPn || null
+                    });
+                } catch {}
                 const transient = errMsg.includes('Connection Closed')
                     || errMsg.includes('Timed Out')
                     // libsignal SessionError thrown when no pairwise session
