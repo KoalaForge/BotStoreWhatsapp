@@ -14,20 +14,45 @@ class AuthEncryptionService {
         this.pbkdf2Iterations = 100000;
         this.pbkdf2Digest = 'sha256';
         this.encryptionKey = encryptionKey;
+
+        // PBKDF2(100k) costs ~50-90ms and is SYNCHRONOUS — it blocks the event
+        // loop. The old code derived a fresh key per encrypt/decrypt with a
+        // random per-call salt. Baileys 7.x uploads INITIAL_PREKEY_COUNT=812
+        // pre-keys on a fresh pair; encrypting them one-by-one = 812 × pbkdf2
+        // ≈ 74s of blocked loop → WS keepalive starves → "Connection was lost"
+        // → reconnect → regenerate 812 → infinite loop (single bot never comes
+        // online). Fix: derive ONCE and cache. New writes use a deterministic
+        // fixed salt so they all share one cached key; decrypt caches by the
+        // salt embedded in each record, so legacy random-salt data still
+        // decrypts (one pbkdf2 per distinct legacy salt, then cached). GCM
+        // stays secure via a random IV per encrypt.
+        this._keyCache = new Map();
+        this._fixedSalt = crypto
+            .createHash('sha256')
+            .update(`wa-auth-kdf-salt-v1:${encryptionKey}`)
+            .digest()
+            .subarray(0, this.saltLength);
     }
 
     deriveKey(salt) {
-        return crypto.pbkdf2Sync(
-            this.encryptionKey,
-            salt,
-            this.pbkdf2Iterations,
-            this.keyLength,
-            this.pbkdf2Digest
-        );
+        const cacheKey = salt.toString('hex');
+        let key = this._keyCache.get(cacheKey);
+        if (!key) {
+            key = crypto.pbkdf2Sync(
+                this.encryptionKey,
+                salt,
+                this.pbkdf2Iterations,
+                this.keyLength,
+                this.pbkdf2Digest
+            );
+            this._keyCache.set(cacheKey, key);
+        }
+        return key;
     }
 
     encrypt(plainText) {
-        const salt = crypto.randomBytes(this.saltLength);
+        // Fixed salt → cached derived key (no per-call PBKDF2). IV stays random.
+        const salt = this._fixedSalt;
         const iv = crypto.randomBytes(this.ivLength);
         const key = this.deriveKey(salt);
 
