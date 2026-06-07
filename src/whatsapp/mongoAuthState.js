@@ -6,6 +6,39 @@ const WaAuthState = require('../database/models/waAuthStateModel');
 const { EncryptionService } = require('./authEncryption');
 const clc = require('cli-color');
 
+// Durable-write retry. A transient Mongo network blip (ENETUNREACH / timeout)
+// must NOT silently drop a creds/keys write — that desyncs the persisted
+// session from the live one and triggers a code 405 reconnect loop. Retry
+// transient errors with jittered backoff; rethrow on exhaustion so the caller
+// (WaConnection creds.update handler) can mark the session dirty + reflush.
+const MONGO_WRITE_RETRIES = Number(process.env.WA_MONGO_WRITE_RETRIES) || 4;
+const MONGO_RETRY_BASE = 500;
+
+function isTransientMongoError(err) {
+    const name = err?.name || '';
+    const msg = (err?.message || '').toLowerCase();
+    return /^Mongo(Network|ServerSelection|Network?Timeout|Timeout)/.test(name)
+        || msg.includes('timed out') || msg.includes('enetunreach')
+        || msg.includes('econnrefused') || msg.includes('econnreset')
+        || msg.includes('server selection') || msg.includes('topology')
+        || msg.includes('pool') || msg.includes('socket');
+}
+
+async function withMongoRetry(op, label) {
+    let lastErr;
+    for (let attempt = 0; attempt <= MONGO_WRITE_RETRIES; attempt++) {
+        try { return await op(); }
+        catch (err) {
+            lastErr = err;
+            if (!isTransientMongoError(err) || attempt === MONGO_WRITE_RETRIES) throw err;
+            const delay = Math.round(MONGO_RETRY_BASE * 2 ** attempt * (0.7 + Math.random() * 0.6));
+            console.error(clc.yellow(`[WA Auth] ${label} transient mongo error (try ${attempt + 1}/${MONGO_WRITE_RETRIES + 1}): ${err.message} — retry ${delay}ms`));
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    throw lastErr;
+}
+
 /**
  * Hybrid auth state for Baileys.
  *
@@ -90,11 +123,11 @@ async function useMongoAuthState(botId) {
         const serialized = JSON.stringify(data, BufferJSON.replacer);
         const encrypted = encryption.encrypt(serialized);
 
-        await WaAuthState.updateOne(
+        await withMongoRetry(() => WaAuthState.updateOne(
             { botId, dataType, dataKey },
             { $set: { data: encrypted } },
             { upsert: true }
-        );
+        ), `writeData ${dataType}/${dataKey}`);
     }
 
     async function readData(dataType, dataKey) {
@@ -224,7 +257,8 @@ async function useMongoAuthState(botId) {
                     if (!mongoOps.length) return;
                     const CHUNK = 500;
                     for (let i = 0; i < mongoOps.length; i += CHUNK) {
-                        await WaAuthState.bulkWrite(mongoOps.slice(i, i + CHUNK), { ordered: false });
+                        const slice = mongoOps.slice(i, i + CHUNK);
+                        await withMongoRetry(() => WaAuthState.bulkWrite(slice, { ordered: false }), `keys bulkWrite[${i}]`);
                     }
                 })();
 
