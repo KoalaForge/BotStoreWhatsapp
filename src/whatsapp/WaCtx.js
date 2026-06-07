@@ -224,9 +224,13 @@ class WaCtx {
         let lastErr;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             // Pre-flight readiness check: if the socket isn't OPEN, wait a
-            // bit for reconnect before throwing. ws.readyState === 1 → OPEN.
+            // bit for reconnect before throwing. sock.ws is Baileys'
+            // WebSocketClient wrapper — its open state is the `isOpen` getter,
+            // NOT `readyState` (undefined on the wrapper, so the old
+            // `ws.readyState !== 1` was always true → an unconditional 1.5s
+            // delay on every send).
             const ws = this.sock?.ws;
-            if (!this.sock || (ws && ws.readyState !== 1)) {
+            if (!this.sock || (ws && !ws.isOpen)) {
                 await new Promise(r => setTimeout(r, 1500));
             }
             // Keep the watchdog quiet: an outgoing send in progress counts as

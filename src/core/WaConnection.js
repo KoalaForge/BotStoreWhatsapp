@@ -385,15 +385,23 @@ class WaConnection extends EventEmitter {
                 // WS genuinely open → healthy, just quiet (normal for
                 // low-traffic DM bots). Baileys' own keepalive detects a truly
                 // dead socket and fires connection.update('close'). Skip the
-                // churn-restart here. Trade-off: a rare zombie where readyState
-                // stays 1 while the server silently stops responding relies on
-                // Baileys' keepalive query, not this watchdog.
-                if (this.sock?.ws?.readyState === 1) return;
+                // churn-restart here. Trade-off: a rare zombie where the socket
+                // stays open while the server silently stops responding relies
+                // on Baileys' keepalive query, not this watchdog.
+                //
+                // NB: sock.ws is Baileys' WebSocketClient wrapper, NOT a raw ws.
+                // It exposes the `isOpen` getter (socket.readyState === OPEN);
+                // it has NO `readyState` of its own, so the old
+                // `ws.readyState === 1` was ALWAYS false → this guard never
+                // fired → the watchdog force-closed every healthy-but-idle
+                // socket every WD_IDLE_MS, causing the 428 reconnect churn that
+                // dropped replies ("typing forever, no reply").
+                if (this.sock?.ws?.isOpen) return;
                 // WS not open but _state still 'connected' → stale/half-open
                 // zombie; connection.update hasn't fired yet. Force reconnect.
                 const idle = Date.now() - this._lastEventAt;
                 if (idle > WD_IDLE_MS) {
-                    log('WARN', `Watchdog: bot ${this.botId} idle ${Math.round(idle / 1000)}s, ws not open (readyState=${this.sock?.ws?.readyState}) — forcing WS restart.`);
+                    log('WARN', `Watchdog: bot ${this.botId} idle ${Math.round(idle / 1000)}s, ws not open (isOpen=${this.sock?.ws?.isOpen}) — forcing WS restart.`);
                     this._emit('watchdog_restart', { idle_ms: idle });
                     try {
                         if (this.sock?.ws?.close) this.sock.ws.close();
@@ -476,7 +484,10 @@ class WaConnection extends EventEmitter {
      */
     async _prewarmGroupCache() {
         if (!this.sock || !this.isRunning) return false;
-        if (this.sock.ws?.readyState !== 1) return false;
+        // sock.ws is the WebSocketClient wrapper — use its `isOpen` getter, not
+        // `readyState` (which is undefined on the wrapper → old check always
+        // returned false → prewarm never ran).
+        if (!this.sock.ws?.isOpen) return false;
         try {
             const allMeta = await this.sock.groupFetchAllParticipating();
             const count = Object.keys(allMeta || {}).length;
