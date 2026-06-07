@@ -105,22 +105,14 @@ class WaCtx {
     /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        const key = this._rawMessage.key || {};
-        const remote = key.remoteJid || '';
-
-        // Groups: send to the group JID as-is.
-        if (remote.endsWith('@g.us')) return remote;
-
-        // DM: Baileys can't deliver to a raw `@lid` (signal session is
-        // PN-based) — the send fails silently and the user is stuck on
-        // "typing forever, no reply". Resolve to the phone JID via
-        // remoteJidAlt (v7+) or senderPn (v6.7), mirroring the `from`/`jid`
-        // getters. Presence/typing route fine to the PN too.
-        if (remote.endsWith('@lid')) {
-            return key.remoteJidAlt || key.senderPn || remote;
-        }
-
-        return remote;
+        // Reply on the SAME JID the message arrived on (group @g.us, DM @lid
+        // or PN). Baileys keyed the signal session to this exact address; do
+        // NOT rewrite DM `@lid`→PN here — that targets a different/empty
+        // session, so the send resolves but never delivers ("typing forever,
+        // no reply"). Identity resolution (DB lookups) lives in `from`, which
+        // still maps @lid→PN. See revert f289028: the @lid→PN reply rewrite
+        // made bots respond once then go silent in DM while groups kept working.
+        return this._rawMessage.key?.remoteJid || '';
     }
 
     /**
