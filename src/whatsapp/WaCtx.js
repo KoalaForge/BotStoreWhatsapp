@@ -105,16 +105,25 @@ class WaCtx {
     /** Chat JID — full JID needed by sock.sendMessage() */
     get chat() {
         if (this._chatOverride) return this._chatOverride;
-        // Reply on the SAME JID the message arrived on (group @g.us, DM @lid
-        // or PN). Baileys 6.7.21 keys the inbound signal session to this exact
-        // address (libsignal jidToSignalProtocolAddress uses jidDecode().user
-        // verbatim — the bare LID number for an @lid). Do NOT rewrite DM
-        // `@lid`→PN: `remoteJidAlt` does not exist in 6.7.21 and `senderPn` is
-        // often absent, so the rewrite targets a PN with no session — libsignal
-        // throws "No sessions" and the send never delivers ("typing forever,
-        // no reply"). Identity/whitelist resolution lives in `from`, which
-        // still maps @lid→PN. See revert f289028 + fix beb6fcb.
-        return this._rawMessage.key?.remoteJid || '';
+        const key = this._rawMessage.key || {};
+        const remote = key.remoteJid || '';
+
+        // Groups: send to the group JID as-is.
+        if (remote.endsWith('@g.us')) return remote;
+
+        // DM from an `@lid` sender: a raw `@lid` is NOT deliverable — Baileys
+        // ACCEPTS the send and returns a msgId, but WhatsApp silently drops it
+        // (runtime-confirmed via [SENDDBG]: send OK + msgId, zero delivery).
+        // Must address the phone JID. Baileys 6.7.21 exposes it as `senderPn`
+        // (e.g. 628xxx@s.whatsapp.net); prefer it, then remoteJidAlt (v7+),
+        // and only fall back to the raw `@lid` when no PN is available.
+        // (The earlier "@lid→PN respond-once-then-silent" was the watchdog
+        // 428 churn dropping sends — fixed separately — not the PN itself.)
+        if (remote.endsWith('@lid')) {
+            return key.senderPn || key.remoteJidAlt || remote;
+        }
+
+        return remote;
     }
 
     /**
