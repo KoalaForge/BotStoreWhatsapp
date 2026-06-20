@@ -64,7 +64,10 @@ async function buyCommand(ctx) {
         }
 
         // 1. INSTANT pre-DM ack — order resolution + QRIS gen takes a few seconds.
-        await replyInGroupWithMention(ctx, buildProcessingLine()).catch(() => {});
+        // Best-effort, but LOG on failure — a swallowed group send was why the
+        // "group got nothing" drops looked random for weeks.
+        await replyInGroupWithMention(ctx, buildProcessingLine())
+            .catch(err => console.warn('[ GROUPACK ] buy processing line failed:', err?.message));
 
         const dmCtx = ctx.cloneToDM();
         dmCtx.match = [null, code];
@@ -79,8 +82,10 @@ async function buyCommand(ctx) {
         }
         await actions.payWithQris(dmCtx);
 
-        // 2. POST-DM ready ack — QRIS is in DM.
-        return replyInGroupWithMention(ctx, buildReadyLine(ctx.sock));
+        // 2. POST-DM ready ack — QRIS is in DM. DM already succeeded; a failed
+        // group ack here must not surface as a command error — log, don't throw.
+        return replyInGroupWithMention(ctx, buildReadyLine(ctx.sock))
+            .catch(err => console.warn('[ GROUPACK ] buy ready line failed:', err?.message));
     }
 
     // DM: existing quick-buy behavior

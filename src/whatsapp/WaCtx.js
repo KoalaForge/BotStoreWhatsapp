@@ -1,6 +1,7 @@
 const clc = require('cli-color');
 const { humanDelay, typingDelay, backoffDelay, isHumanizeDisabled } = require('../utils/humanDelay');
 const { canSendOutgoing, recordOutgoing } = require('../utils/outgoingRateLimiter');
+const { sendGuarded } = require('../utils/sendGuarded');
 
 /**
  * WaCtx - WhatsApp Context Wrapper
@@ -219,103 +220,15 @@ class WaCtx {
      * @private
      */
     async _sendWithRetry(jid, content, options = {}, maxRetries = 1) {
-        let lastErr;
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            // Pre-flight readiness check: if the socket isn't OPEN, wait a
-            // bit for reconnect before throwing. sock.ws is Baileys'
-            // WebSocketClient wrapper — its open state is the `isOpen` getter,
-            // NOT `readyState` (undefined on the wrapper, so the old
-            // `ws.readyState !== 1` was always true → an unconditional 1.5s
-            // delay on every send).
-            const ws = this.sock?.ws;
-            if (!this.sock || (ws && !ws.isOpen)) {
-                await new Promise(r => setTimeout(r, 1500));
-            }
-            // Keep the watchdog quiet: an outgoing send in progress counts as
-            // activity. Without this, a long send to a 1000-member group
-            // (USync + fanout encrypt) can stretch past the watchdog idle
-            // threshold and trip a false WS restart mid-send.
-            this.sock?._touchEvent?.();
-            // Settle grace: server-side device slot needs ~2s to finish
-            // registering after `connection: 'open'`. Sending earlier can
-            // hit 428 "Connection Closed" mid-flight. WaConnection stamps
-            // `sock._openedAt` on every open — sleep the remainder. Was 8s
-            // historically; that overshoots on healthy networks and stacks
-            // with retry × storm gate to cause multi-minute user hangs.
-            const openedAt = this.sock?._openedAt;
-            if (openedAt && Date.now() - openedAt < 2000) {
-                const wait = 2000 - (Date.now() - openedAt);
-                if (wait > 0) await new Promise(r => setTimeout(r, wait));
-            }
-            // Session-storm flag: when a burst of decrypt failures fires
-            // (peers with desynced ratchets after a reconnect), libsignal is
-            // busy recreating sessions and the event loop is CPU-saturated.
-            // Sending mid-storm draws 428 — wait for the flag to expire.
-            // GROUP sends only: storm is many-peers libsignal churn, so DM
-            // sends to a single peer can proceed without waiting.
-            const isGroupSend = typeof jid === 'string' && jid.endsWith('@g.us');
-            const stormUntil = this.sock?._sessionStormUntil;
-            if (stormUntil && Date.now() < stormUntil && isGroupSend) {
-                const wait = Math.min(stormUntil - Date.now(), 8000);
-                if (wait > 0) await new Promise(r => setTimeout(r, wait));
-            }
-            try {
-                const _res = await this.sock.sendMessage(jid, content, options);
-                // [SENDDBG] temporary instrumentation — confirms send resolved
-                // and to which JID. If this logs "OK" but the user gets nothing,
-                // the @lid outbound is accepted by Baileys but dropped by WA
-                // (need PN). Remove once the DM issue is root-caused.
-                try {
-                    const k = this._rawMessage?.key || {};
-                    console.log('[ SENDDBG ] send OK', {
-                        jid,
-                        attempt,
-                        msgId: _res?.key?.id || null,
-                        remoteJid: k.remoteJid || null,
-                        senderPn: k.senderPn || null,
-                        participantPn: k.participantPn || null
-                    });
-                } catch {}
-                return _res;
-            } catch (err) {
-                lastErr = err;
-                const errMsg = err?.message || '';
-                const code = err?.output?.statusCode;
-                // [SENDDBG] temporary instrumentation — exact failure at the
-                // choke point. Remove once root-caused.
-                try {
-                    const k = this._rawMessage?.key || {};
-                    console.log('[ SENDDBG ] send FAIL', {
-                        jid,
-                        attempt,
-                        err: errMsg,
-                        code: code ?? null,
-                        name: err?.name || null,
-                        remoteJid: k.remoteJid || null,
-                        senderPn: k.senderPn || null
-                    });
-                } catch {}
-                const transient = errMsg.includes('Connection Closed')
-                    || errMsg.includes('Timed Out')
-                    // libsignal SessionError thrown when no pairwise session
-                    // exists for the target (peer re-keyed, or session gap
-                    // after a volume-less restart). sock.sendMessage runs
-                    // assertSessions which fetches a fresh prekey bundle, so a
-                    // single backoff retry usually succeeds rather than dropping
-                    // the reply. 'No session' substring also covers 'No sessions'.
-                    || errMsg.includes('No session')
-                    || errMsg.includes('No open session')
-                    || code === 408
-                    || code === 428
-                    || code === 500
-                    || code === 503;
-                if (!transient || attempt === maxRetries) throw err;
-                // Backoff: 1.5s, 3.5s. Server-side device-slot re-registration
-                // after a 408 typically clears in ~2-3s.
-                await new Promise(r => setTimeout(r, 1500 + attempt * 2000));
-            }
-        }
-        throw lastErr;
+        // Delegates to the shared sendGuarded() so DM (ctx.*) and group-ack
+        // helpers (groupReply.js) walk the identical hardened path: readiness
+        // wait, open settle grace, session-storm gate, watchdog touch, and
+        // transient-error retry. debugKey threads the trigger message key so
+        // [SENDDBG] @lid tracing keeps working from the standalone helper.
+        return sendGuarded(this.sock, jid, content, options, {
+            maxRetries,
+            debugKey: this._rawMessage?.key || null
+        });
     }
 
     /**

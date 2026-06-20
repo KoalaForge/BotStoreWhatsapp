@@ -1,4 +1,10 @@
 const { getBotPhone } = require('./jidHelper');
+const { sendGuarded } = require('./sendGuarded');
+
+// Group acks aren't latency-critical (a 2s-late ack is fine, a dropped one
+// looks broken) — give them one extra attempt over the DM default so they ride
+// out a longer storm window. 2 → 3 total attempts.
+const GROUP_ACK_RETRIES = 2;
 
 /**
  * Send a reply into a group with the sender mentioned and the original
@@ -18,13 +24,20 @@ async function replyInGroupWithMention(ctx, text) {
     const key = ctx.rawMessage?.key || {};
     const senderJid = key.participant || ctx.jid;
     const phone = String(senderJid).split('@')[0].split(':')[0];
-    return ctx.sock.sendMessage(
+    // Routed through sendGuarded (NOT raw sock.sendMessage) so the group ack
+    // gets the same storm-gate + retry that DM sends get. In big groups the ack
+    // is a USync-fanout send — the one most likely to draw a 428 mid-storm and,
+    // before this, the one with zero retry. That asymmetry was the root cause of
+    // "command ran, buyer got DM, group got nothing".
+    return sendGuarded(
+        ctx.sock,
         ctx.chat,
         {
             text: `@${phone} ${text}`,
             mentions: [senderJid]
         },
-        { quoted: ctx.rawMessage }
+        { quoted: ctx.rawMessage },
+        { maxRetries: GROUP_ACK_RETRIES, debugKey: key }
     );
 }
 
@@ -84,13 +97,18 @@ async function sendGroupAck(sock, { groupJid, senderJid, senderPhone, messageId,
     const tokenFromJid = senderJid ? String(senderJid).split('@')[0].split(':')[0] : null;
     const token = tokenFromJid || senderPhone || null;
     const body = token ? `@${token} ${text}` : text;
-    return sock.sendMessage(
+    // Routed through sendGuarded so the post-delivery thank-you ack survives the
+    // same storm window the QRIS/product DM just rode out. This helper only has
+    // `sock` (no ctx) — which is exactly why it bypassed the guard before.
+    return sendGuarded(
+        sock,
         groupJid,
         {
             text: body,
             mentions: senderJid ? [senderJid] : []
         },
-        opts
+        opts,
+        { maxRetries: GROUP_ACK_RETRIES, debugKey: opts.quoted?.key || null }
     );
 }
 

@@ -63,8 +63,10 @@ async function buyNowCommand(ctx) {
             );
         }
 
-        // 1. INSTANT pre-DM ack.
-        await replyInGroupWithMention(ctx, buildProcessingLine()).catch(() => {});
+        // 1. INSTANT pre-DM ack. Best-effort, but LOG on failure — a swallowed
+        // group send was why the "group got nothing" drops looked random.
+        await replyInGroupWithMention(ctx, buildProcessingLine())
+            .catch(err => console.warn('[ GROUPACK ] buynow processing line failed:', err?.message));
 
         const dmCtx = ctx.cloneToDM();
         dmCtx.match = [null, code];
@@ -77,8 +79,10 @@ async function buyNowCommand(ctx) {
         }
         await actions.handlePayWithBalance(dmCtx);
 
-        // 2. POST-DM ready ack — confirm prompt waits in DM.
-        return replyInGroupWithMention(ctx, buildReadyLine(ctx.sock));
+        // 2. POST-DM ready ack — confirm prompt waits in DM. DM already
+        // succeeded; a failed group ack must not surface as a command error.
+        return replyInGroupWithMention(ctx, buildReadyLine(ctx.sock))
+            .catch(err => console.warn('[ GROUPACK ] buynow ready line failed:', err?.message));
     }
 
     // DM: existing quick-buy behavior
