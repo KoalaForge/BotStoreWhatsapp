@@ -13,6 +13,13 @@ const { formatMoney } = require('../database/models/money');
 const FILE_DELIVERY_THRESHOLD = 5;
 
 /**
+ * WhatsApp text message limit (chars). Pesan di atas ini bisa gagal terkirim.
+ * Safe limit memberi ruang aman di bawah batas keras.
+ */
+const MESSAGE_CHAR_LIMIT = 65536;
+const MESSAGE_SAFE_LIMIT = 65000;
+
+/**
  * Generate file content for order data with separator per variant
  * @param {Object} params
  * @param {string} params.transactionId - Transaction ID
@@ -120,9 +127,22 @@ function shouldDeliverAsFile(orderQuantity) {
     return orderQuantity > FILE_DELIVERY_THRESHOLD;
 }
 
+/**
+ * Check if a rendered message would exceed WhatsApp's safe length limit.
+ * Dipakai untuk fallback ke file walau quantity kecil tapi datanya panjang.
+ * @param {string} text - Rendered message text
+ * @returns {boolean}
+ */
+function exceedsMessageLimit(text) {
+    return (text?.length ?? 0) > MESSAGE_SAFE_LIMIT;
+}
+
 module.exports = {
     FILE_DELIVERY_THRESHOLD,
+    MESSAGE_CHAR_LIMIT,
+    MESSAGE_SAFE_LIMIT,
     generateFileContent,
     sendOrderDataAsFile,
-    shouldDeliverAsFile
+    shouldDeliverAsFile,
+    exceedsMessageLimit
 };
