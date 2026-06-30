@@ -445,6 +445,8 @@ class OrderService {
                 codeVariant: stock.codeVariant,
                 dataStock: stock.dataStock,
                 profit: stock.profit || 0,
+                ownerId: stock.ownerId ?? null,
+                expires_at: stock.expires_at ?? null,
                 createdAt: stock.createdAt,
                 updatedAt: stock.updatedAt
             });
