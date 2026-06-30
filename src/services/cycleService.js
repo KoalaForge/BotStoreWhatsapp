@@ -77,12 +77,14 @@ async function manualCycleTransaction(ctx, transactionId) {
             // Safely insert valid credentials back to stock
             try {
                 const now = new Date();
+                // Fallback for legacy items whose data snapshot predates ownerId capture
+                const variant = await productVariantRepository.findByCodeVariant(ctx, item.codeVariant);
                 for (const record of item.data) {
                     // Partial expiry: skip records with expired expires_at
                     if (record.expires_at && new Date(record.expires_at) <= now) continue;
 
                     const expiresAt = record.expires_at ?? null;
-                    const ownerId = record.ownerId ?? null;
+                    const ownerId = record.ownerId ?? variant?.ownerId ?? null;
 
                     if (ownerId === null) {
                         // Platform stock (reseller orders, ownerId=null)
@@ -185,12 +187,14 @@ async function bulkCycleEligible(ctx) {
 
             try {
                 const now = new Date();
+                // Fallback for legacy items whose data snapshot predates ownerId capture
+                const variant = await productVariantRepository.findByCodeVariant(ctx, item.codeVariant);
                 for (const record of item.data) {
                     // Partial expiry: skip records with expired expires_at
                     if (record.expires_at && new Date(record.expires_at) <= now) continue;
 
                     const expiresAt = record.expires_at ?? null;
-                    const ownerId = record.ownerId ?? null;
+                    const ownerId = record.ownerId ?? variant?.ownerId ?? null;
 
                     if (ownerId === null) {
                         await stockRepository.addPlatformStock(item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt);
