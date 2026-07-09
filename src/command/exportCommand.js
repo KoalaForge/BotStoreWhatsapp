@@ -83,6 +83,10 @@ const { toggleSaldo, toggleWelcome } = require('./privateCommand/toggleFeature')
 const toggleWhitelist = require('./privateCommand/toggleWhitelist');
 const { listWhitelist, approveWhitelist, rejectWhitelist } = require('./privateCommand/whitelistAdmin');
 const caraWhitelist = require('./helpCommand/caraWhitelist');
+const { banVariant, banProduct, unbanVariant, unbanProduct, listVariantBan } = require('./privateCommand/variantBanAdmin');
+const { setProductWl, setVariantWl, listVariantWl, listProductWl, approveVariant, rejectVariant, approveProduct, rejectProduct } = require('./privateCommand/variantWhitelistAdmin');
+const caraVariantBan = require('./helpCommand/caraVariantBan');
+const caraVariantWhitelist = require('./helpCommand/caraVariantWhitelist');
 
 // Private commands — CS Management
 const csCommand = require('./publicCommand/cs');
@@ -237,6 +241,21 @@ module.exports = {
     approveWhitelist,
     rejectWhitelist,
     caraWhitelist,
+    banVariant,
+    banProduct,
+    unbanVariant,
+    unbanProduct,
+    listVariantBan,
+    setProductWl,
+    setVariantWl,
+    listVariantWl,
+    listProductWl,
+    approveVariant,
+    rejectVariant,
+    approveProduct,
+    rejectProduct,
+    caraVariantBan,
+    caraVariantWhitelist,
     recapProduct,
     cycle,
     cycleBulk,

@@ -124,6 +124,25 @@ function registerCommands(router) {
     safeCommand(router, ['rejectwhitelist', 'whitelistreject', 'reject'], command.rejectWhitelist);
     safeCommand(router, ['carawhitelist'], command.caraWhitelist);
 
+    // Per-variant ban (default off)
+    safeCommand(router, ['banvariant', 'banvarian'], command.banVariant);
+    safeCommand(router, ['banproduct', 'banproduk'], command.banProduct);
+    safeCommand(router, ['unbanvariant', 'unbanvarian'], command.unbanVariant);
+    safeCommand(router, ['unbanproduct', 'unbanproduk'], command.unbanProduct);
+    safeCommand(router, ['listvariantban', 'daftarvariantban'], command.listVariantBan);
+    safeCommand(router, ['caravariantban', 'carabanvariant'], command.caraVariantBan);
+
+    // Per-variant whitelist (default off)
+    safeCommand(router, ['setproductwl', 'setproductwhitelist'], command.setProductWl);
+    safeCommand(router, ['setvariantwl', 'setvariantwhitelist'], command.setVariantWl);
+    safeCommand(router, ['listvariantwl', 'listvariantwhitelist', 'daftarvariantwl'], command.listVariantWl);
+    safeCommand(router, ['listproductwl', 'listproductwhitelist', 'daftarproductwl'], command.listProductWl);
+    safeCommand(router, ['approvevariant', 'variantapprove'], command.approveVariant);
+    safeCommand(router, ['rejectvariant', 'variantreject'], command.rejectVariant);
+    safeCommand(router, ['approveproduct', 'productapprove'], command.approveProduct);
+    safeCommand(router, ['rejectproduct', 'productreject'], command.rejectProduct);
+    safeCommand(router, ['caravariantwl', 'caravariantwhitelist'], command.caraVariantWhitelist);
+
     // ============================================
     // PLATFORM BALANCE COMMANDS (Phase 5 - stubs)
     // ============================================

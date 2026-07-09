@@ -11,6 +11,7 @@ const moment = require('moment-timezone');
 const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
 const { isFeatureEnabled } = require('../utils/featureFlags');
 const { getMessageText } = require('../utils/messageContext');
+const variantAccessGuard = require('../services/variantAccessGuard');
 
 async function handlePayWithBalance(ctx) {
     try {
@@ -36,6 +37,15 @@ async function handlePayWithBalance(ctx) {
         // Resolve order context (works for both normal and reseller orders)
         const orderCtx = await orderService.resolveOrderContext(ctx, { productName, variantName, resellerOrder, quantity: orderAmount });
         const { product, variant, effectivePrice, isReseller, markupPerUnit, displayVariantName } = orderCtx;
+
+        // Per-variant access guard (ban + whitelist; both default off)
+        const accessGuard = await variantAccessGuard.checkPayment(ctx, userId, variant.codeVariant, product.code, {
+            productRequiresWhitelist: product.requiresWhitelist === true,
+            variantRequiresWhitelist: variant.requiresWhitelist === true
+        });
+        if (!accessGuard.allowed) {
+            return ctx.reply(accessGuard.message);
+        }
 
         // Use orderService helper to get voucher details and calculate totals (with reseller cap)
         const subtotal = orderAmount * effectivePrice;

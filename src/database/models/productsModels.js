@@ -19,6 +19,13 @@ const productSchema = new Schema({
         default: true,
         required: false,
     },
+    // When true, buyers must be whitelist-approved before opening/buying any
+    // variant of this product (per-target opt-in; default off).
+    requiresWhitelist: {
+        type: Boolean,
+        default: false,
+        required: false,
+    },
     // Owner isolation for MULTI mode
     ownerId: {
         type: String,

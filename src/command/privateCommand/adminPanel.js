@@ -13,10 +13,12 @@ const getAdminPanelContent = () => {
     let text = '*Admin Panel*\n\n';
 
     text += '*Produk*\n';
-    text += '`.addproduct` `.delproduct` `.activateproduct` `.deactivateproduct`\n\n';
+    text += '`.addproduct` `.delproduct` `.activateproduct` `.deactivateproduct`\n';
+    text += '_Ban/Whitelist produk (semua variant):_ `.banproduct` `.unbanproduct` `.setproductwl` `.approveproduct` `.rejectproduct` `.listproductwl`\n\n';
 
     text += '*Variant*\n';
-    text += '`.addvariant` `.delvariant` `.activateproductvariant` `.deactivateproductvariant` `.setharga` `.setvariantsnk` `.delvariantsnk`\n\n';
+    text += '`.addvariant` `.delvariant` `.activateproductvariant` `.deactivateproductvariant` `.setharga` `.setvariantsnk` `.delvariantsnk`\n';
+    text += '_Ban/Whitelist variant:_ `.banvariant` `.unbanvariant` `.listvariantban` `.setvariantwl` `.approvevariant` `.rejectvariant` `.listvariantwl` `.caravariantban` `.caravariantwl`\n\n';
 
     text += '*Tier Pricing (Grosir)*\n';
     text += '`.addtierpricing` `.deltierpricing` `.listtierpricing` `.cleartierpricing`\n\n';

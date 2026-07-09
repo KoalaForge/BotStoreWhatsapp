@@ -18,6 +18,7 @@ const { getMessageText } = require('../utils/messageContext');
 const screenState = require('../state/screenState');
 const { jidQuery } = require('../utils/jidHelper');
 const { sendGroupAck } = require('../utils/groupReply');
+const variantAccessGuard = require('../services/variantAccessGuard');
 
 /**
  * Centralized function to format balance history description with transaction IDs
@@ -79,6 +80,15 @@ async function confirmPayBalance(ctx) {
         });
         const { product, variant, effectivePrice, isReseller, markupPerUnit, displayVariantName } = orderCtx;
         isResellerOrder = isReseller;
+
+        // Per-variant access guard (ban + whitelist; both default off)
+        const accessGuard = await variantAccessGuard.checkPayment(ctx, userId, variant.codeVariant, product.code, {
+            productRequiresWhitelist: product.requiresWhitelist === true,
+            variantRequiresWhitelist: variant.requiresWhitelist === true
+        });
+        if (!accessGuard.allowed) {
+            return ctx.reply(accessGuard.message);
+        }
 
         // Owner balance pre-check for reseller orders
         if (isResellerOrder) {

@@ -6,6 +6,7 @@ const { buildVariantItems } = require("../utils/variantDisplayHelper");
 const { formatCurrency } = require("../utils/waFormatter");
 const screenState = require('../state/screenState');
 const { resolveFromCtx, sendWithBanner } = require('../utils/bannerResolver');
+const variantAccessGuard = require('../services/variantAccessGuard');
 
 /**
  * Extract product selector from callback data or message text.
@@ -43,6 +44,16 @@ async function handleProductList(ctx) {
             getProduct = products[0];
         }
         if (!getProduct) return;
+
+        // Product-scope access guard: block opening the product's variant list
+        // entirely when the buyer is product-banned or the product requires whitelist.
+        const accessGuard = await variantAccessGuard.checkEntry(ctx, ctx.from, null, getProduct.code, {
+            productName: getProduct.name,
+            productRequiresWhitelist: getProduct.requiresWhitelist === true
+        });
+        if (!accessGuard.allowed) {
+            return ctx.reply(accessGuard.message);
+        }
 
         const ownerId = ctx.repositoryContext?.ownerId;
 

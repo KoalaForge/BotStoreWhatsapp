@@ -10,6 +10,7 @@ const moment = require("moment-timezone");
 const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
 const { getMessageText } = require('../utils/messageContext');
 const screenState = require('../state/screenState');
+const variantAccessGuard = require('../services/variantAccessGuard');
 
 async function payWithQris(ctx) {
     // Tracks stock claimed before QRIS gen — restored on any post-claim failure
@@ -48,6 +49,15 @@ async function payWithQris(ctx) {
         });
         const { product, variant, effectivePrice, isReseller, markupPerUnit, displayVariantName } = orderCtx;
         isResellerOrder = isReseller;
+
+        // Per-variant access guard (ban + whitelist; both default off)
+        const accessGuard = await variantAccessGuard.checkPayment(ctx, userId, variant.codeVariant, product.code, {
+            productRequiresWhitelist: product.requiresWhitelist === true,
+            variantRequiresWhitelist: variant.requiresWhitelist === true
+        });
+        if (!accessGuard.allowed) {
+            return ctx.reply(accessGuard.message);
+        }
 
         // Owner balance pre-check for reseller orders with own credentials
         const balanceValidation = await validateResellerBalanceIfNeeded(ctx, {

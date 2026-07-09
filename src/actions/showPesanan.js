@@ -15,6 +15,7 @@ const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
 const { resolveBanner, sendWithBanner } = require('../utils/bannerResolver');
 const variantSearchService = require('../services/variantSearchService');
 const { formatNotFoundReply } = require('../utils/notFoundReply');
+const variantAccessGuard = require('../services/variantAccessGuard');
 
 /**
  * Resolve variant context for both normal and reseller products.
@@ -134,6 +135,19 @@ async function prepareOrder(ctx, quantity = 1) {
         return null;
     }
     const userId = ctx.from;
+
+    // Per-variant access guard (ban + whitelist; both default off)
+    const accessGuard = await variantAccessGuard.checkEntry(ctx, userId, variant.codeVariant, product.code, {
+        productName: product.name,
+        variantName: displayVariantName,
+        productRequiresWhitelist: product.requiresWhitelist === true,
+        variantRequiresWhitelist: variant.requiresWhitelist === true
+    });
+    if (!accessGuard.allowed) {
+        await ctx.reply(accessGuard.message);
+        return null;
+    }
+
     const subtotal = orderQuantity * effectivePrice;
     const resellerContext = isReseller ? { markupPerUnit, quantity: orderQuantity } : null;
 
