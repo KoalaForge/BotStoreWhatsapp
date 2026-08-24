@@ -105,11 +105,11 @@ class BelibayarGateway extends BasePaymentGateway {
       },
       ...(params.customerName ? { customer_name: params.customerName } : {}),
       ...(params.customerEmail ? { customer_email: params.customerEmail } : {}),
-      ...(params.customerPhone ? { customer_phone: params.customerPhone } : {}),
-      ...(params.description ? { description: params.description } : {}),
+      ...(channel.channel === 'ewallet' && params.customerPhone ? { customer_phone: params.customerPhone } : {}),
       ...(params.expiredTime ? { expired_time: params.expiredTime } : {}),
       ...(params.callbackUrl ? { callback_url: params.callbackUrl } : {}),
-      ...(params.redirectUrl ? { redirect_url: params.redirectUrl } : {}),
+      ...(channel.channel === 'ewallet' && params.redirectUrl ? { redirect_url: params.redirectUrl } : {}),
+      ...(channel.channel === 'qris' && params.staticQr !== undefined ? { static_qr: params.staticQr } : {}),
     };
     return payload;
   }

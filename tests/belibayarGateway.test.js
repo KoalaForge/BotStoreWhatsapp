@@ -48,6 +48,27 @@ describe('BelibayarGateway', () => {
     }));
   });
 
+  it('sends only documented fields for a QRIS charge', async () => {
+    mockPost.mockResolvedValue({ data: { data: { reference: 'bb-1', qr_content: 'QR' } } });
+    const gateway = new BelibayarGateway();
+
+    await gateway.createPayment({
+      amount: 12500,
+      referenceId: 'bb-1',
+      paymentMethodCode: 'belibayar-qris',
+      customerName: 'Buyer',
+      customerPhone: '08123456789',
+      description: 'legacy-description',
+    });
+
+    expect(JSON.parse(mockPost.mock.calls[0][1])).toEqual({
+      reference: 'bb-1',
+      amount: 12500,
+      pay_method: { method: 'qris' },
+      customer_name: 'Buyer',
+    });
+  });
+
   it.each([
     ['belibayar-qris', { pay_method: { method: 'qris' } }],
     ['belibayar-va-bca', { pay_method: { method: 'virtual_account', channel: 'BCA' } }],
