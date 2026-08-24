@@ -153,11 +153,21 @@ class GatewayResolverService {
             return { feeConfig: null, paymentMethodCode: 'qris' };
         }
 
-        const paymentMethod = await PaymentMethod.findOne({
+        const methodFilter = {
             payment_gateway_slug: platformGateway.slug,
-            method_type: 'qris',
             is_active: true
-        }).lean();
+        };
+        if (gatewayType !== 'belibayar') methodFilter.method_type = 'qris';
+        if (gatewayType === 'belibayar') methodFilter.code = process.env.BELIBAYAR_METHOD || 'belibayar-qris';
+
+        let paymentMethod = await PaymentMethod.findOne(methodFilter).lean();
+        if (!paymentMethod && gatewayType === 'belibayar') {
+            delete methodFilter.code;
+            paymentMethod = await PaymentMethod.findOne({
+                ...methodFilter,
+                code: /^belibayar-/,
+            }).sort({ code: 1 }).lean();
+        }
 
         if (!paymentMethod) {
             return { feeConfig: null, paymentMethodCode: 'qris' };
