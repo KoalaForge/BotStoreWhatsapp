@@ -107,7 +107,7 @@ async function payWithQris(ctx) {
         const { profit, stockItems } = stockResult;
         claimedStockItems = stockItems;
 
-        await ctx.reply("⏳ Membuat QRIS pembayaran...");
+        await ctx.reply("⏳ Membuat pembayaran...");
 
         // Generate QRIS for product purchase (includes gateway fee calculation)
         const { qrisImage, transactionId, messageText: qrisMessage, formattedDate, formattedDateFile, gatewayFee, finalAmount, paymentMethodCode, gatewayReference } =
@@ -128,8 +128,9 @@ async function payWithQris(ctx) {
         const { htmlToWhatsApp } = require('../utils/waFormatter');
         const waMessage = htmlToWhatsApp(qrisMessage);
 
-        // Send QRIS image with caption
-        const sentMsg = await ctx.sendImage(imageBuffer, waMessage);
+        const sentMsg = imageBuffer
+            ? await ctx.sendImage(imageBuffer, waMessage)
+            : await ctx.reply(waMessage);
 
         // Send cancel instruction as plain text
         await ctx.reply('_Ketik *batal* untuk membatalkan pesanan_');

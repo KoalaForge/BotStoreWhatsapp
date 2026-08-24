@@ -208,6 +208,7 @@ class QRISService {
             customerName: 'KOALASTORE WA',
             customerPhone: '0000000000',
             customerEmail: 'no@email.com',
+            paymentMethodCode,
             ctx
         });
 
@@ -224,7 +225,8 @@ class QRISService {
             formattedTime,
             fee,
             customerPays,
-            feeDisplay
+            feeDisplay,
+            payment: qrisResult,
         });
 
         return {
@@ -237,7 +239,8 @@ class QRISService {
             totalAmount: paymentGateway.usesBaseAmount ? nominal : customerPays,
             originalAmount: nominal,
             paymentMethodCode,
-            gatewayReference: qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null
+            gatewayReference: qrisResult.reference ?? qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null,
+            payment: qrisResult
         };
     }
 
@@ -263,6 +266,7 @@ class QRISService {
             customerName: 'KOALASTORE WA',
             customerPhone: '0000000000',
             customerEmail: 'no@email.com',
+            paymentMethodCode,
             ctx
         });
 
@@ -279,7 +283,8 @@ class QRISService {
             formattedTime,
             fee,
             customerPays,
-            feeDisplay
+            feeDisplay,
+            payment: qrisResult,
         });
 
         return {
@@ -292,7 +297,8 @@ class QRISService {
             totalAmount: paymentGateway.usesBaseAmount ? nominal : customerPays,
             originalAmount: nominal,
             paymentMethodCode,
-            gatewayReference: qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null
+            gatewayReference: qrisResult.reference ?? qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null,
+            payment: qrisResult
         };
     }
 
@@ -317,6 +323,7 @@ class QRISService {
             customerName: 'KOALASTORE WA',
             customerPhone: '0000000000',
             customerEmail: 'no@email.com',
+            paymentMethodCode,
             ctx
         });
 
@@ -336,7 +343,8 @@ class QRISService {
             voucherDiscount,
             gatewayFee,
             customerPays,
-            feeDisplay
+            feeDisplay,
+            payment: qrisResult
         });
 
         return {
@@ -348,7 +356,8 @@ class QRISService {
             gatewayFee,
             finalAmount: paymentGateway.usesBaseAmount ? totalAmount : customerPays,
             paymentMethodCode,
-            gatewayReference: qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null
+            gatewayReference: qrisResult.reference ?? qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null,
+            payment: qrisResult
         };
     }
 
@@ -385,7 +394,7 @@ class QRISService {
      * Format top-up message (WhatsApp markdown)
      * @private
      */
-    _formatTopUpMessage({ nominal, currentTime, uniqCode, formattedTime, fee = 0, customerPays = null, feeDisplay = null }) {
+    _formatTopUpMessage({ nominal, currentTime, uniqCode, formattedTime, fee = 0, customerPays = null, feeDisplay = null, payment = null }) {
         let text = `> *Top-Up Saldo*\n\n`;
         text += `*ID:* \`${uniqCode}\`\n`;
         text += `*Jenis:* Top-Up Saldo\n`;
@@ -406,7 +415,7 @@ class QRISService {
         }
 
         text += `*Waktu:* ${currentTime}\n\n`;
-        text += `_Selesaikan pembayaran sebelum ${formattedTime} WIB dengan scan QRIS di atas._\n\n`;
+        text += this._formatPaymentInstruction(payment, formattedTime);
         text += `Ketik *batal* untuk membatalkan.`;
         return text;
     }
@@ -415,7 +424,7 @@ class QRISService {
      * Format owner platform top-up message (WhatsApp markdown)
      * @private
      */
-    _formatOwnerTopUpMessage({ nominal, currentTime, uniqCode, formattedTime, fee = 0, customerPays = null, feeDisplay = null }) {
+    _formatOwnerTopUpMessage({ nominal, currentTime, uniqCode, formattedTime, fee = 0, customerPays = null, feeDisplay = null, payment = null }) {
         let text = `> *Top-Up Saldo Platform*\n\n`;
         text += `*ID:* \`${uniqCode}\`\n`;
         text += `*Jenis:* Top-Up Saldo Platform\n`;
@@ -436,7 +445,7 @@ class QRISService {
         }
 
         text += `*Waktu:* ${currentTime}\n\n`;
-        text += `_Selesaikan pembayaran sebelum ${formattedTime} WIB dengan scan QRIS di atas._\n\n`;
+        text += this._formatPaymentInstruction(payment, formattedTime);
         text += `Ketik *batal* untuk membatalkan.`;
         return text;
     }
@@ -445,7 +454,7 @@ class QRISService {
      * Format product QRIS message (WhatsApp markdown)
      * @private
      */
-    _formatProductQRISMessage({ productName, price, uniqCode, orderAmount, totalAmount, formattedTime, voucherCode = null, voucherDiscount = 0, gatewayFee = 0, customerPays = null, feeDisplay = null }) {
+    _formatProductQRISMessage({ productName, price, uniqCode, orderAmount, totalAmount, formattedTime, voucherCode = null, voucherDiscount = 0, gatewayFee = 0, customerPays = null, feeDisplay = null, payment = null }) {
         let text = `> *Pesanan Dikonfirmasi*\n\n`;
         text += `*Produk:* "${productName}"\n`;
         text += `*Harga:* Rp ${parseInt(price).toLocaleString('id-ID')}\n`;
@@ -476,9 +485,23 @@ class QRISService {
             text += `*Total Bayar:* Rp ${totalAmount.toLocaleString('id-ID')}\n`;
         }
 
-        text += `\n_Scan QRIS di atas dan selesaikan pembayaran sebelum pukul ${formattedTime} WIB._\n`;
+        text += `\n${this._formatPaymentInstruction(payment, formattedTime)}`;
         text += `_Pesanan akan dibatalkan otomatis jika melewati batas waktu._`;
         return text;
+    }
+
+    _formatPaymentInstruction(payment, formattedTime) {
+        if (!payment || payment.channel === 'qris') {
+            return `_Selesaikan pembayaran sebelum ${formattedTime} WIB dengan scan QRIS di atas._\n\n`;
+        }
+
+        const lines = [`*Metode:* ${payment.channel}`];
+        if (payment.virtualAccount) lines.push(`*Nomor VA:* \`${payment.virtualAccount}\``);
+        if (payment.paymentUrl) lines.push(`*Link Pembayaran:* ${payment.paymentUrl}`);
+        if (payment.retailCode) lines.push(`*Kode Pembayaran:* \`${payment.retailCode}\``);
+        if (payment.qrContent) lines.push(`*Kode QR:* \`${payment.qrContent}\``);
+        lines.push(`_Selesaikan pembayaran sebelum ${payment.expiresAt || `${formattedTime} WIB`}._`, '');
+        return `${lines.join('\n')}\n`;
     }
 }
 
