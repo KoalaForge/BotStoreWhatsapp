@@ -9,6 +9,11 @@ jest.mock('axios', () => ({
 jest.mock('qrcode', () => ({
   toBuffer: jest.fn(async () => Buffer.from('qr-image')),
 }));
+jest.mock('../src/services/payment/utils/qrCodeGenerator', () => ({
+  generateQRCodeWithTemplate: jest.fn(async () => Buffer.from('templated-qr')),
+  generateQRImageWithTemplate: jest.fn(async () => Buffer.from('templated-image')),
+  isQrisOverlayEnabled: jest.fn(async () => false),
+}));
 
 const BelibayarGateway = require('../src/services/payment/gateways/BelibayarGateway');
 

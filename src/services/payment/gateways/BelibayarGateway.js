@@ -4,6 +4,7 @@ const moment = require('moment-timezone');
 const BasePaymentGateway = require('./BasePaymentGateway');
 const QRCode = require('qrcode');
 const { createCanvas, loadImage } = require('canvas');
+const { generateQRCodeWithTemplate, generateQRImageWithTemplate, isQrisOverlayEnabled } = require('../utils/qrCodeGenerator');
 
 const axiosInstance = axios.create({ timeout: 60000 });
 
@@ -182,7 +183,18 @@ class BelibayarGateway extends BasePaymentGateway {
     if (response?.success === false || response?.data?.success === false || data?.success === false || data?.status === 'failed' || data?.status === 'error') {
       throw new Error(`Failed to create Belibayar payment: ${response?.message || data?.message || 'Unknown error'}`);
     }
-    return this._normalizePayment(response, methodCode);
+    const payment = await this._normalizePayment(response, methodCode);
+    const channel = this._channelForMethod(methodCode).channel;
+
+    if (channel === 'qris' && await isQrisOverlayEnabled(params.ctx)) {
+      payment.imageBuffer = payment.qrContent
+        ? await generateQRCodeWithTemplate(payment.qrContent, params.qrOptions || {}, params.ctx)
+        : Buffer.isBuffer(payment.imageBuffer)
+          ? await generateQRImageWithTemplate(payment.imageBuffer, params.qrOptions || {}, params.ctx)
+          : payment.imageBuffer;
+    }
+
+    return payment;
   }
 
   async createQRIS(params) {
