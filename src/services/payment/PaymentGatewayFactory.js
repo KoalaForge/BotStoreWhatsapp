@@ -4,6 +4,7 @@ const TripayGateway = require('./gateways/TripayGateway');
 const PakasirGateway = require('./gateways/PakasirGateway');
 const OrderKuotaGateway = require('./gateways/OrderKuotaGateway');
 const QrispyGateway = require('./gateways/QrispyGateway');
+const VitopediaPayGateway = require('./gateways/VitopediaPayGateway');
 
 /**
  * Payment Gateway Factory
@@ -28,6 +29,7 @@ class PaymentGatewayFactory {
     this.registerGateway('pakasir', PakasirGateway);
     this.registerGateway('orderkuota', OrderKuotaGateway);
     this.registerGateway('qrispy', QrispyGateway);
+    this.registerGateway('vitopedia', VitopediaPayGateway);
 
     // Set default gateway from environment or fallback to 'linkqu'
     const defaultGatewayName = (process.env.DEFAULT_PAYMENT_GATEWAY || 'linkqu').toLowerCase();
