@@ -69,6 +69,16 @@ describe('BelibayarGateway', () => {
     });
   });
 
+  it('converts the provider qr_code image into a sendable buffer', async () => {
+    mockPost.mockResolvedValue({ data: { data: { qr_code: 'data:image/svg+xml;base64,PHN2Zy8+' } } });
+    const gateway = new BelibayarGateway();
+
+    const result = await gateway.createPayment({ amount: 10000, referenceId: 'bb-qr-image', paymentMethodCode: 'belibayar-qris' });
+
+    expect(Buffer.isBuffer(result.imageBuffer)).toBe(true);
+    expect(result.qrContent).toBeNull();
+  });
+
   it.each([
     ['belibayar-qris', { pay_method: { method: 'qris' } }],
     ['belibayar-va-bca', { pay_method: { method: 'virtual_account', channel: 'BCA' } }],

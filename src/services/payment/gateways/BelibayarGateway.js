@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const moment = require('moment-timezone');
 const BasePaymentGateway = require('./BasePaymentGateway');
 const QRCode = require('qrcode');
+const { createCanvas, loadImage } = require('canvas');
 
 const axiosInstance = axios.create({ timeout: 60000 });
 
@@ -130,8 +131,8 @@ class BelibayarGateway extends BasePaymentGateway {
   async _normalizePayment(response, methodCode, expiry = null) {
     const data = this._responseData(response);
     const channel = this._channelForMethod(methodCode).channel;
-    const qrContent = data?.qr_content || data?.qr_string || data?.qr_code || data?.qris_content || null;
-    const qrImage = data?.qr_image || data?.qr_url || data?.image_url || null;
+    const qrContent = data?.qr_content || data?.qr_string || data?.qris_content || null;
+    const qrImage = data?.qr_code || data?.qr_image || data?.qr_url || data?.image_url || null;
     const paymentUrl = data?.payment_link_url || data?.payment_url || data?.payment_link || data?.checkout_url || data?.url || null;
     const virtualAccount = data?.virtual_account || data?.va_number || data?.account_number || null;
     const retailCode = data?.retail_code || data?.payment_code || data?.bill_code || null;
@@ -141,7 +142,11 @@ class BelibayarGateway extends BasePaymentGateway {
       reference: data?.reference || data?.payment_reference || data?.transaction_reference || null,
       channel,
       qrContent,
-      imageBuffer: qrContent ? await QRCode.toBuffer(qrContent, { width: 300, margin: 2 }) : qrImage,
+      imageBuffer: qrImage && /^data:image\//i.test(qrImage)
+        ? await this._dataUriToPng(qrImage)
+        : qrContent
+          ? await QRCode.toBuffer(qrContent, { width: 300, margin: 2 })
+          : qrImage,
       qrImage,
       virtualAccount,
       paymentUrl,
@@ -151,6 +156,18 @@ class BelibayarGateway extends BasePaymentGateway {
       expiresAt,
       raw: response,
     };
+  }
+
+  async _dataUriToPng(dataUri) {
+    const imageData = Buffer.from(dataUri.slice(dataUri.indexOf(',') + 1), 'base64');
+    const svg = imageData.toString('utf8');
+    const normalizedSvg = /^\s*<svg\b/i.test(svg) && (!/\bwidth\s*=/i.test(svg) || !/\bheight\s*=/i.test(svg))
+      ? svg.replace(/<svg\b/i, '<svg width="512" height="512"')
+      : svg;
+    const image = await loadImage(Buffer.from(normalizedSvg, 'utf8'));
+    const canvas = createCanvas(image.width, image.height);
+    canvas.getContext('2d').drawImage(image, 0, 0);
+    return canvas.toBuffer('image/png');
   }
 
   async createPayment(params) {

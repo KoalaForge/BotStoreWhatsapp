@@ -491,7 +491,7 @@ class QRISService {
     }
 
     _formatPaymentInstruction(payment, formattedTime) {
-        if (!payment || payment.channel === 'qris') {
+        if (!payment || String(payment.channel || '').toLowerCase() === 'qris') {
             return `_Selesaikan pembayaran sebelum ${formattedTime} WIB dengan scan QRIS di atas._\n\n`;
         }
 
