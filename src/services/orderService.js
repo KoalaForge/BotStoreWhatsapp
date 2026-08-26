@@ -128,6 +128,8 @@ class OrderService {
     async finalizeTrackedStock(ctx, { stockItems, isReseller, transactionId, orderItemId = null }) {
         if (!Array.isArray(stockItems)) return;
 
+        const context = ctx?.repositoryContext ?? ctx;
+
         for (const item of stockItems) {
             if (item.stockSchemaVersion !== 2 || !item.reservationToken) continue;
 
@@ -136,7 +138,7 @@ class OrderService {
                 continue;
             }
 
-            await stockRepository.finalizeClaim(ctx.repositoryContext, item._id, item.reservationToken, transactionId, orderItemId);
+            await stockRepository.finalizeClaim(context, item._id, item.reservationToken, transactionId, orderItemId);
         }
     }
 
