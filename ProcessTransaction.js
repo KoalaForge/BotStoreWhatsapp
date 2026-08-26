@@ -10,6 +10,8 @@ const transactionService = require('./src/services/transactionService');
 const waPaymentTriggerService = require('./src/services/waPaymentTriggerService');
 const gatewayResolverService = require('./src/services/payment/GatewayResolverService');
 const transactionItemsHelper = require('./src/utils/transactionItemsHelper');
+const orderTransactionItemService = require('./src/services/orderTransactionItemService');
+const orderService = require('./src/services/orderService');
 const waMessageFormatter = require('./src/utils/waMessageFormatter');
 
 const PaymentMethod = require('./src/database/models/paymentMethodModel');
@@ -151,6 +153,18 @@ async function detectPaymentAndDeliver(sock, context, transaction, statusData) {
         } else {
             const { useOwnCredentials } = await gatewayResolverService.resolveGateway(transaction.ownerId);
             await transactionService.markTransactionSuccess(context, transaction.transactionId, paymentDate, useOwnCredentials);
+        }
+    }
+
+    if (!isOwnerTopUp) {
+        const items = await orderTransactionItemService.getTransactionItems(context, transaction.transactionId);
+        for (const item of items) {
+            await orderService.finalizeTrackedStock(context, {
+                stockItems: item.data,
+                isReseller: transaction.is_reseller_order === true,
+                transactionId: transaction.transactionId,
+                orderItemId: item._id
+            });
         }
     }
 

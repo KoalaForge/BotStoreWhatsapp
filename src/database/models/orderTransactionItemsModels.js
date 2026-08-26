@@ -74,6 +74,30 @@ const orderTransactionItemSchema = new Schema({
             type: Number,
             required: true
         },
+        unitCost: {
+            type: Number,
+            required: false,
+            default: null
+        },
+        stockBatchId: {
+            type: String,
+            required: false,
+            default: null
+        },
+        stockOriginId: {
+            type: String,
+            required: false,
+            default: null,
+            index: true
+        },
+        stockSchemaVersion: {
+            type: Number,
+            required: false
+        },
+        reservationToken: {
+            type: String,
+            required: false
+        },
         ownerId: {
             type: String,
             default: null

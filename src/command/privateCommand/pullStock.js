@@ -16,6 +16,7 @@ const transactionService = require('../../services/transactionService');
 const waProductDeliveryService = require('../../services/waProductDeliveryService');
 const { formatMoney } = require('../../database/models/money');
 const { sanitizeErrorMessage } = require('../../utils/errorSanitizer');
+const { randomUUID } = require('crypto');
 
 function generateRandomCode() {
     const prefix = 'INV';
@@ -69,17 +70,18 @@ async function pullStockReseller(ctx, codeVariant, quantity) {
         return ctx.reply(`Produk variant dengan kode *${codeVariant}* hanya tersisa ${platformStockCount}x`);
     }
 
+    const uniqCode = generateRandomCode();
+    const reservation = { token: randomUUID(), transactionId: uniqCode, orderItemId: null, expiresAt: null };
     const stockResult = await orderService.processStockForPlatform(codeVariant, quantity, {
         productCode: resellerProduct.code,
         productName: resellerProduct.name,
         variantName: config.custom_name || platformVariant.name
-    });
+    }, reservation);
 
     const displayVariantName = config.custom_name || platformVariant.name;
     const formattedDate = moment().tz('Asia/Jakarta').format('YYYY-MM-DD HH:mm:ss');
     const userJID = ctx.chat;
     const userId = ctx.from;
-    const uniqCode = generateRandomCode();
     const paidAt = new Date();
 
     const platformRecord = await transactionService.createPlatformRecord({
@@ -174,6 +176,12 @@ async function pullStockReseller(ctx, codeVariant, quantity) {
         }
     }]);
 
+    await orderService.finalizeTrackedStock(ctx, {
+        stockItems: stockResult.stockItems,
+        isReseller: true,
+        transactionId: uniqCode
+    });
+
     const ProductVariantSnkModel = require('../../database/models/productVariantSnkModels');
     const getVariantProductSnk = await ProductVariantSnkModel.findOne({ codeVariant: codeVariant, ownerId: null });
 
@@ -238,13 +246,12 @@ const pullStock = async (ctx) => {
         const ownerId = ctx.repositoryContext?.ownerId;
         const price = await ctx.pricingService.calculatePrice(getVariantProduct, ownerId); // Admin pullStock: base price only, tier_pricing tidak apply (policy)
         const totalPayment = price * quantity;
-        const getStock = await stockRepository.find(ctx, { codeVariant: codeVariant });
         const uniqCode = generateRandomCode();
         const userJID = ctx.chat;
         const userId = ctx.from;
         const getVariantProductSnk = await productVariantSnkRepository.findByCodeVariant(ctx, getVariantProduct.codeVariant);
 
-        const totalStockAvailable = await stockRepository.count(ctx, { codeVariant: codeVariant });
+        const totalStockAvailable = await stockRepository.countStock(ctx, codeVariant);
         const getProduct = await productRepository.findByCode(ctx, getVariantProduct.code);
         const userData = await botUserRepository.findByWhatsappId(ctx, userId);
         const buyerName = userData?.usernameTelegram || userId;
@@ -257,20 +264,13 @@ const pullStock = async (ctx) => {
             return ctx.reply(`Produk variant dengan kode *${codeVariant}* hanya tersisa ${totalStockAvailable}x`);
         }
 
-        let dataStock = '';
-        let totalStock = 0;
-        let profit = 0;
-        const stockItems = [];
-        for (const stock of getStock) {
-            if (totalStock >= quantity) break;
-
-            dataStock += `${stock.dataStock}\n`;
-            profit += stock.profit;
-            stockItems.push(stock);
-
-            await stockRepository.deleteOne(ctx, { dataStock: stock.dataStock });
-            totalStock++;
-        }
+        const reservation = { token: randomUUID(), transactionId: uniqCode, orderItemId: null, expiresAt: null };
+        const stockResult = await orderService.processStockForItems(ctx, codeVariant, parseInt(quantity), {
+            productCode: getVariantProduct.code,
+            productName: getProduct.name,
+            variantName: getVariantProduct.name
+        }, reservation);
+        const { dataStock, profit, stockItems } = stockResult;
 
         const formattedDate = moment().tz('Asia/Jakarta').format('YYYY-MM-DD HH:mm:ss');
 
@@ -305,6 +305,12 @@ const pullStock = async (ctx) => {
                 variantName: getVariantProduct.name
             }
         }]);
+
+        await orderService.finalizeTrackedStock(ctx, {
+            stockItems,
+            isReseller: false,
+            transactionId: uniqCode
+        });
 
         await cycleService.setCycleEligibilityByTransactionId(ctx, uniqCode, new Date());
 

@@ -11,6 +11,7 @@ const { sanitizeErrorMessage } = require('../utils/errorSanitizer');
 const { getMessageText } = require('../utils/messageContext');
 const screenState = require('../state/screenState');
 const variantAccessGuard = require('../services/variantAccessGuard');
+const { randomUUID } = require('crypto');
 
 async function payWithQris(ctx) {
     // Tracks stock claimed before QRIS gen — restored on any post-claim failure
@@ -81,6 +82,12 @@ async function payWithQris(ctx) {
         });
 
         const { voucherCode, voucherDiscount, totalPrice: totalAmount } = orderCalculation;
+        const reservation = {
+            token: randomUUID(),
+            transactionId: null,
+            orderItemId: null,
+            expiresAt: new Date(Date.now() + (6 * 60 * 1000))
+        };
 
         // CLAIM STOCK ATOMICALLY BEFORE generating QRIS.
         // Prevents race where multiple buyers receive QRIS for stock that no longer exists.
@@ -91,12 +98,13 @@ async function payWithQris(ctx) {
                 isReseller: isResellerOrder,
                 variant,
                 quantity: orderAmount,
-                productInfo: {
+                 productInfo: {
                     productCode: product.code,
                     productName: product.name,
-                    variantName: displayVariantName
-                }
-            });
+                     variantName: displayVariantName
+                 },
+                 reservation
+             });
         } catch (stockErr) {
             if (orderService.isStockUnavailableError(stockErr)) {
                 return ctx.reply('Stok habis, tidak bisa melanjutkan.');

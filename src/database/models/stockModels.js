@@ -14,6 +14,89 @@ const stockVariantsSchema = new Schema({
         type: Number,
         required: true
     },
+    unitCost: {
+        type: Number,
+        required: false,
+        default: null
+    },
+    stockBatchId: {
+        type: String,
+        required: false,
+        default: null,
+        index: true
+    },
+    stockOriginId: {
+        type: String,
+        required: false,
+        index: true
+    },
+    stockSchemaVersion: {
+        type: Number,
+        required: false,
+        index: true
+    },
+    stockState: {
+        type: String,
+        enum: ['available', 'reserved', 'sold', 'removed', 'expired', 'quarantined'],
+        required: false,
+        index: true
+    },
+    stateRevision: {
+        type: Number,
+        required: false
+    },
+    reservationToken: {
+        type: String,
+        required: false,
+        index: true
+    },
+    reservedTransactionId: {
+        type: String,
+        required: false
+    },
+    reservedOrderItemId: {
+        type: String,
+        required: false
+    },
+    reservedAt: {
+        type: Date,
+        required: false
+    },
+    reservationExpiresAt: {
+        type: Date,
+        required: false,
+        index: true
+    },
+    soldTransactionId: {
+        type: String,
+        required: false,
+        index: true
+    },
+    soldOrderItemId: {
+        type: String,
+        required: false
+    },
+    availableAt: {
+        type: Date,
+        required: false,
+        index: true
+    },
+    cycleGeneration: {
+        type: Number,
+        required: false
+    },
+    lastCycledAt: {
+        type: Date,
+        required: false
+    },
+    removedAt: {
+        type: Date,
+        required: false
+    },
+    removedReason: {
+        type: String,
+        required: false
+    },
     // Owner isolation for MULTI mode
     ownerId: {
         type: String,

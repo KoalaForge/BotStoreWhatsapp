@@ -85,12 +85,29 @@ async function manualCycleTransaction(ctx, transactionId) {
 
                     const expiresAt = record.expires_at ?? null;
                     const ownerId = record.ownerId ?? variant?.ownerId ?? null;
+                    const lineage = {
+                        unitCost: record.unitCost ?? null,
+                        stockBatchId: record.stockBatchId ?? null,
+                        stockOriginId: record.stockOriginId ?? null
+                    };
+
+                    if (record.stockSchemaVersion === 2 && record.stockOriginId && record.reservationToken) {
+                        const cycleResult = ownerId === null
+                            ? await stockRepository.cyclePlatformStock(record._id, record.reservationToken)
+                            : await stockRepository.cycleStock(ctx, record._id, record.reservationToken);
+
+                        if (cycleResult.modifiedCount === 0) {
+                            throw new Error(`Tracked stock ${record.stockOriginId} could not be cycled.`);
+                        }
+
+                        continue;
+                    }
 
                     if (ownerId === null) {
                         // Platform stock (reseller orders, ownerId=null)
-                        await stockRepository.addPlatformStock(item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt);
+                        await stockRepository.addPlatformStock(item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt, lineage);
                     } else {
-                        await stockRepository.addStock(ctx, item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt);
+                        await stockRepository.addStock(ctx, item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt, lineage);
                     }
                 }
                 results.success++;
@@ -195,11 +212,28 @@ async function bulkCycleEligible(ctx) {
 
                     const expiresAt = record.expires_at ?? null;
                     const ownerId = record.ownerId ?? variant?.ownerId ?? null;
+                    const lineage = {
+                        unitCost: record.unitCost ?? null,
+                        stockBatchId: record.stockBatchId ?? null,
+                        stockOriginId: record.stockOriginId ?? null
+                    };
+
+                    if (record.stockSchemaVersion === 2 && record.stockOriginId && record.reservationToken) {
+                        const cycleResult = ownerId === null
+                            ? await stockRepository.cyclePlatformStock(record._id, record.reservationToken)
+                            : await stockRepository.cycleStock(ctx, record._id, record.reservationToken);
+
+                        if (cycleResult.modifiedCount === 0) {
+                            throw new Error(`Tracked stock ${record.stockOriginId} could not be cycled.`);
+                        }
+
+                        continue;
+                    }
 
                     if (ownerId === null) {
-                        await stockRepository.addPlatformStock(item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt);
+                        await stockRepository.addPlatformStock(item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt, lineage);
                     } else {
-                        await stockRepository.addStock(ctx, item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt);
+                        await stockRepository.addStock(ctx, item.codeVariant, record.dataStock, record.profit ?? 0, expiresAt, lineage);
                     }
                 }
                 results.success++;

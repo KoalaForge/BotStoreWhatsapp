@@ -27,6 +27,30 @@ async function restoreItemsToStock(items, restoreItemFn) {
     }
 }
 
+async function restoreStockRecord(context, stockRecord, isPlatform) {
+    if (stockRecord.stockSchemaVersion === 2 && stockRecord.reservationToken) {
+        if (isPlatform) {
+            await stockRepository.releasePlatformClaim(stockRecord._id, stockRecord.reservationToken);
+        } else {
+            await stockRepository.releaseClaim(context, stockRecord._id, stockRecord.reservationToken);
+        }
+        return;
+    }
+
+    const lineage = {
+        unitCost: stockRecord.unitCost,
+        stockBatchId: stockRecord.stockBatchId,
+        stockOriginId: stockRecord.stockOriginId
+    };
+
+    if (isPlatform) {
+        await stockRepository.addPlatformStock(stockRecord.codeVariant, stockRecord.dataStock, stockRecord.profit || 0, stockRecord.expires_at, lineage);
+        return;
+    }
+
+    await stockRepository.addStock(context, stockRecord.codeVariant, stockRecord.dataStock, stockRecord.profit || 0, stockRecord.expires_at, lineage);
+}
+
 /**
  * Get order data from transaction (backward compatible)
  * Tries items first, falls back to orderData
@@ -91,11 +115,7 @@ async function restoreStockCompat(context, transaction) {
         if (items && items.length > 0) {
             await restoreItemsToStock(items, async (item) => {
                 for (const stockRecord of item.data) {
-                    await stockRepository.addPlatformStock(
-                        stockRecord.codeVariant,
-                        stockRecord.dataStock,
-                        stockRecord.profit || 0
-                    );
+                    await restoreStockRecord(context, stockRecord, true);
                 }
             });
         }
@@ -142,13 +162,9 @@ async function restoreStockCompat(context, transaction) {
 
     if (items && items.length > 0) {
         await restoreItemsToStock(items, async (item) => {
-            const stockDataArray = item.data.map(s => s.dataStock);
-            const orderDataString = stockDataArray.join('\n');
-
-            const totalProfit = item.data.reduce((sum, s) => sum + (s.profit || 0), 0);
-            const profitPerUnit = totalProfit / item.quantity;
-
-            await addStocks(context, orderDataString, item.codeVariant, profitPerUnit);
+            for (const stockRecord of item.data) {
+                await restoreStockRecord(context, stockRecord, false);
+            }
         });
 
         await cycleService.clearCycleEligibilityForItems(transaction._id.toString());

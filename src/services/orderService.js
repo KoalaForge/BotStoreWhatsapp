@@ -85,11 +85,11 @@ class OrderService {
      * @param {Object} params.productInfo - Product metadata for snapshot
      * @returns {Promise<Object>} - { dataStock, profit, totalProcessed, stockItems, productInfo }
      */
-    async processOrderStock(ctx, { isReseller, variant, quantity, productInfo }) {
+    async processOrderStock(ctx, { isReseller, variant, quantity, productInfo, reservation = null }) {
         if (isReseller) {
-            return this.processStockForPlatform(variant.codeVariant, quantity, productInfo);
+            return this.processStockForPlatform(variant.codeVariant, quantity, productInfo, reservation);
         }
-        return this.processStockForItems(ctx, variant.codeVariant, quantity, productInfo);
+        return this.processStockForItems(ctx, variant.codeVariant, quantity, productInfo, reservation);
     }
 
     /**
@@ -104,18 +104,17 @@ class OrderService {
         for (const item of stockItems) {
             try {
                 if (isReseller) {
-                    await stockRepository.addPlatformStock(
-                        item.codeVariant,
-                        item.dataStock,
-                        item.profit || 0
-                    );
+                    if (item.stockSchemaVersion === 2 && item.reservationToken) {
+                        await stockRepository.releasePlatformClaim(item._id, item.reservationToken);
+                    } else {
+                        await stockRepository.addPlatformStock(item.codeVariant, item.dataStock, item.profit || 0, item.expires_at, item);
+                    }
                 } else {
-                    await stockRepository.addStock(
-                        ctx.repositoryContext,
-                        item.codeVariant,
-                        item.dataStock,
-                        item.profit || 0
-                    );
+                    if (item.stockSchemaVersion === 2 && item.reservationToken) {
+                        await stockRepository.releaseClaim(ctx.repositoryContext, item._id, item.reservationToken);
+                    } else {
+                        await stockRepository.addStock(ctx.repositoryContext, item.codeVariant, item.dataStock, item.profit || 0, item.expires_at, item);
+                    }
                 }
             } catch (restoreErr) {
                 console.error('[ orderService.restoreClaimedStock ] Failed restoring item:', {
@@ -123,6 +122,21 @@ class OrderService {
                     error: restoreErr.message
                 });
             }
+        }
+    }
+
+    async finalizeTrackedStock(ctx, { stockItems, isReseller, transactionId, orderItemId = null }) {
+        if (!Array.isArray(stockItems)) return;
+
+        for (const item of stockItems) {
+            if (item.stockSchemaVersion !== 2 || !item.reservationToken) continue;
+
+            if (isReseller) {
+                await stockRepository.finalizePlatformClaim(item._id, item.reservationToken, transactionId, orderItemId);
+                continue;
+            }
+
+            await stockRepository.finalizeClaim(ctx.repositoryContext, item._id, item.reservationToken, transactionId, orderItemId);
         }
     }
 
@@ -250,7 +264,11 @@ class OrderService {
      * @returns {Promise<number>} - Available stock count
      */
     async getStockCount(context, codeVariant) {
-        return await stockRepository.count(context, { codeVariant: codeVariant });
+        if (typeof stockRepository.countStock === 'function') {
+            return await stockRepository.countStock(context, codeVariant);
+        }
+
+        return await stockRepository.count(context, { codeVariant });
     }
 
     /**
@@ -422,14 +440,16 @@ class OrderService {
      * @returns {Promise<Object>} - { dataStock, profit, stockItems }
      * @private
      */
-    async _consumeStockItems(stocks, { deleteFn, rollbackFn, errorMessage }) {
+    async _consumeStockItems(stocks, { deleteFn, rollbackFn, errorMessage, alreadyClaimed = false }) {
         let dataStock = "";
         let profit = 0;
         const stockItems = [];
         const consumed = [];
 
         for (const stock of stocks) {
-            const deleteResult = await deleteFn(stock);
+            const deleteResult = alreadyClaimed
+                ? { deletedCount: 1 }
+                : await deleteFn(stock);
             if (deleteResult.deletedCount === 0) {
                 for (const item of consumed) {
                     await rollbackFn(item);
@@ -440,7 +460,26 @@ class OrderService {
             dataStock += `${stock.dataStock}\n`;
             profit += stock.profit || 0;
 
-            stockItems.push({
+            stockItems.push(this._buildStockSnapshot(stock));
+
+            const consumedSnapshot = {
+                codeVariant: stock.codeVariant,
+                dataStock: stock.dataStock,
+                profit: stock.profit || 0
+            };
+
+            for (const key of ['unitCost', 'stockBatchId', 'stockOriginId', 'stockSchemaVersion', 'reservationToken']) {
+                if (stock[key] !== null && stock[key] !== undefined) consumedSnapshot[key] = stock[key];
+            }
+
+            consumed.push(consumedSnapshot);
+        }
+
+        return { dataStock: dataStock.trim(), profit: parseInt(profit) || 0, stockItems };
+    }
+
+    _buildStockSnapshot(stock) {
+        const snapshot = {
                 _id: stock._id,
                 codeVariant: stock.codeVariant,
                 dataStock: stock.dataStock,
@@ -449,16 +488,13 @@ class OrderService {
                 expires_at: stock.expires_at ?? null,
                 createdAt: stock.createdAt,
                 updatedAt: stock.updatedAt
-            });
+        };
 
-            consumed.push({
-                codeVariant: stock.codeVariant,
-                dataStock: stock.dataStock,
-                profit: stock.profit || 0
-            });
+        for (const key of ['unitCost', 'stockBatchId', 'stockOriginId', 'stockSchemaVersion', 'reservationToken']) {
+            if (stock[key] !== null && stock[key] !== undefined) snapshot[key] = stock[key];
         }
 
-        return { dataStock: dataStock.trim(), profit: parseInt(profit) || 0, stockItems };
+        return snapshot;
     }
 
     /**
@@ -471,7 +507,7 @@ class OrderService {
      * @param {Object} productInfo - Product metadata for snapshot
      * @returns {Promise<Object>} - { dataStock, profit, totalProcessed, stockItems, productInfo }
      */
-    async processStockForPlatform(codeVariant, quantity, productInfo = {}) {
+    async processStockForPlatform(codeVariant, quantity, productInfo = {}, reservation = null) {
         const availableCount = await stockRepository.countPlatformStock(codeVariant);
 
         if (availableCount === 0) {
@@ -482,14 +518,43 @@ class OrderService {
             throw new Error(`Insufficient stock. Available: ${availableCount}, Required: ${quantity}`);
         }
 
-        const stocks = await stockRepository.findPlatformStock(codeVariant, {
-            sort: { createdAt: 1 },
-            limit: quantity
-        });
+        const stocks = [];
+        if (reservation) {
+            for (let index = 0; index < quantity; index++) {
+                const stock = await stockRepository.claimPlatformStock(codeVariant, reservation);
+                if (!stock) break;
+                stocks.push(stock);
+            }
+        } else {
+            stocks.push(...await stockRepository.findPlatformStock(codeVariant, {
+                sort: { createdAt: 1 },
+                limit: quantity
+            }));
+        }
+
+        if (stocks.length < quantity) {
+            for (const stock of stocks) {
+                if (reservation && stock.stockSchemaVersion === 2) {
+                    await stockRepository.releasePlatformClaim(stock._id, reservation.token);
+                }
+            }
+            throw new Error(`Insufficient stock. Available: ${stocks.length}, Required: ${quantity}`);
+        }
 
         const { dataStock, profit, stockItems } = await this._consumeStockItems(stocks, {
             deleteFn: (stock) => stockRepository.deletePlatformStockById(stock._id),
-            rollbackFn: (item) => stockRepository.addPlatformStock(item.codeVariant, item.dataStock, item.profit),
+            alreadyClaimed: reservation !== null,
+            rollbackFn: async (item) => {
+                if (reservation && item.stockSchemaVersion === 2) {
+                    return stockRepository.releasePlatformClaim(item._id, reservation.token);
+                }
+
+                if (item.unitCost === undefined && item.stockBatchId === undefined && item.stockOriginId === undefined) {
+                    return stockRepository.addPlatformStock(item.codeVariant, item.dataStock, item.profit);
+                }
+
+                return stockRepository.addPlatformStock(item.codeVariant, item.dataStock, item.profit, null, item);
+            },
             errorMessage: 'Stock race condition: item consumed by another buyer. Please retry.'
         });
 
@@ -512,9 +577,9 @@ class OrderService {
      * @param {string} productInfo.variantName - Variant name
      * @returns {Promise<Object>} - {dataStock (string - LEGACY), profit (number), totalProcessed (number), stockItems (array - USE THIS), productInfo (object)}
      */
-    async processStockForItems(context, codeVariant, quantity, productInfo = {}) {
+    async processStockForItems(context, codeVariant, quantity, productInfo = {}, reservation = null) {
         // First, check if we have enough stock (count only, no data fetch)
-        const availableCount = await stockRepository.count(context, { codeVariant: codeVariant });
+        const availableCount = await this.getStockCount(context, codeVariant);
 
         if (availableCount === 0) {
             throw new Error('No stock available');
@@ -525,18 +590,43 @@ class OrderService {
         }
 
         // Fetch ONLY the quantity we need (FIFO - oldest first)
-        const stocks = await stockRepository.find(
-            context,
-            { codeVariant: codeVariant },
-            {
-                sort: { createdAt: 1 },
-                limit: quantity
+        const stocks = [];
+        if (reservation) {
+            for (let index = 0; index < quantity; index++) {
+                const stock = await stockRepository.claimStock(context, codeVariant, reservation);
+                if (!stock) break;
+                stocks.push(stock);
             }
-        );
+        } else {
+            const stockQuery = typeof stockRepository.findByCodeVariant === 'function'
+                ? stockRepository.findByCodeVariant(context, codeVariant, { sort: { createdAt: 1 }, limit: quantity })
+                : stockRepository.find(context, { codeVariant }, { sort: { createdAt: 1 }, limit: quantity });
+            stocks.push(...await stockQuery);
+        }
+
+        if (stocks.length < quantity) {
+            for (const stock of stocks) {
+                if (reservation && stock.stockSchemaVersion === 2) {
+                    await stockRepository.releaseClaim(context, stock._id, reservation.token);
+                }
+            }
+            throw new Error(`Insufficient stock. Available: ${stocks.length}, Required: ${quantity}`);
+        }
 
         const { dataStock, profit, stockItems } = await this._consumeStockItems(stocks, {
             deleteFn: (stock) => stockRepository.deleteOne(context, { _id: stock._id }),
-            rollbackFn: (item) => stockRepository.addStock(context, item.codeVariant, item.dataStock, item.profit),
+            alreadyClaimed: reservation !== null,
+            rollbackFn: async (item) => {
+                if (reservation && item.stockSchemaVersion === 2) {
+                    return stockRepository.releaseClaim(context, item._id, reservation.token);
+                }
+
+                if (item.unitCost === undefined && item.stockBatchId === undefined && item.stockOriginId === undefined) {
+                    return stockRepository.addStock(context, item.codeVariant, item.dataStock, item.profit);
+                }
+
+                return stockRepository.addStock(context, item.codeVariant, item.dataStock, item.profit, null, item);
+            },
             errorMessage: 'Stok telah diambil pembeli lain. Silakan coba lagi.'
         });
 

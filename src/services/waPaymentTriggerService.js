@@ -15,6 +15,8 @@ const clc = require('cli-color');
 const TransactionModel = require('../database/models/transactionModels');
 const repositoryContext = require('./repositoryContext');
 const transactionService = require('./transactionService');
+const orderService = require('./orderService');
+const orderTransactionItemService = require('./orderTransactionItemService');
 const gatewayResolverService = require('./payment/GatewayResolverService');
 const modeService = require('./modeService');
 const { deliverTransaction } = require('./waTransactionDeliveryService');
@@ -150,6 +152,17 @@ class WaPaymentTriggerService {
         const paymentTimeString = paidAt || moment().tz('Asia/Jakarta').format('YYYY-MM-DD HH:mm:ss');
 
         await this._markTransactionPaid(transaction, paidDate, paymentId);
+
+        const context = await repositoryContext.createContext(transaction.botId, transaction.ownerId);
+        const items = await orderTransactionItemService.getTransactionItems(context, transaction.transactionId);
+        for (const item of items) {
+            await orderService.finalizeTrackedStock(context, {
+                stockItems: item.data,
+                isReseller: transaction.is_reseller_order === true,
+                transactionId: transaction.transactionId,
+                orderItemId: item._id
+            });
+        }
 
         // 5. Resolve WaConnection for WhatsApp messaging
         const connection = waBotManager.getBotInstance(transaction.botId);

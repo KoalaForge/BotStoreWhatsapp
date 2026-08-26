@@ -19,6 +19,7 @@ const screenState = require('../state/screenState');
 const { jidQuery } = require('../utils/jidHelper');
 const { sendGroupAck } = require('../utils/groupReply');
 const variantAccessGuard = require('../services/variantAccessGuard');
+const { randomUUID } = require('crypto');
 
 /**
  * Centralized function to format balance history description with transaction IDs
@@ -113,6 +114,15 @@ async function confirmPayBalance(ctx) {
             return ctx.reply(`Saldo tidak cukup. Saldo: ${formatMoney(balance)}, Diperlukan: ${formatMoney(totalPrice)}`);
         }
 
+        const formattedDate = moment().tz("Asia/Jakarta").format("YYYY-MM-DD HH:mm:ss");
+        const uniqCode = await transactionService.generateTransactionId("product", ctx);
+        const reservation = {
+            token: randomUUID(),
+            transactionId: uniqCode,
+            orderItemId: null,
+            expiresAt: new Date(Date.now() + (6 * 60 * 1000))
+        };
+
         // CLAIM STOCK ATOMICALLY BEFORE deducting balance.
         // Race-safe via deleteOne+deletedCount; only winners proceed past this point.
         // Done before deleteMessage so failed buyers still see the confirmation message.
@@ -122,12 +132,13 @@ async function confirmPayBalance(ctx) {
                 isReseller: isResellerOrder,
                 variant,
                 quantity: orderAmount,
-                productInfo: {
+                 productInfo: {
                     productCode: product.code,
                     productName: product.name,
-                    variantName: displayVariantName
-                }
-            });
+                     variantName: displayVariantName
+                 },
+                 reservation
+             });
         } catch (stockErr) {
             if (orderService.isStockUnavailableError(stockErr)) {
                 return ctx.reply('Stok habis, tidak bisa melanjutkan.');
@@ -146,9 +157,6 @@ async function confirmPayBalance(ctx) {
 
         // Deduct balance and get new balance
         const newBalance = await transactionService.deductBalance(ctx, userId, totalPrice);
-
-        const formattedDate = moment().tz("Asia/Jakarta").format("YYYY-MM-DD HH:mm:ss");
-        const uniqCode = await transactionService.generateTransactionId("product", ctx);
 
         const transactionProfit = orderService.calculateTransactionProfit({
             isReseller: isResellerOrder,
@@ -268,6 +276,12 @@ async function confirmPayBalance(ctx) {
                 variantName: displayVariantName
             }
         }]);
+
+        await orderService.finalizeTrackedStock(ctx, {
+            stockItems,
+            isReseller: isResellerOrder,
+            transactionId: uniqCode
+        });
 
         // Stock now persisted on transaction items — disarm rollback
         claimedStockItems = null;

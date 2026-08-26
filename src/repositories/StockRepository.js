@@ -1,6 +1,8 @@
 const BaseRepository = require('./BaseRepository');
 const StockModel = require('../database/models/stockModels');
+const StockBatchModel = require('../database/models/stockBatchModels');
 const IsolationStrategy = require('./IsolationStrategy');
+const { randomUUID } = require('crypto');
 
 /**
  * Stock Repository
@@ -21,6 +23,125 @@ class StockRepository extends BaseRepository {
         });
     }
 
+    _availabilityFilter() {
+        return {
+            $or: [
+                { stockSchemaVersion: { $exists: false }, soldAt: null },
+                { stockSchemaVersion: { $lt: 2 }, soldAt: null },
+                { stockSchemaVersion: 2, stockState: 'available' }
+            ]
+        };
+    }
+
+    _withAvailabilityFilter(filter = {}) {
+        return { $and: [filter, this._availabilityFilter()] };
+    }
+
+    async _releaseExpiredReservations(context, ownerFilter = {}) {
+        const resolvedContext = await this._ensureContext(context);
+        const scopedFilter = this._buildFilter(resolvedContext, ownerFilter);
+
+        return await this.model.updateMany(
+            {
+                ...scopedFilter,
+                stockSchemaVersion: 2,
+                stockState: 'reserved',
+                reservationExpiresAt: { $lte: new Date() }
+            },
+            {
+                $set: { stockState: 'available', availableAt: new Date() },
+                $inc: { stateRevision: 1 },
+                $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
+            }
+        );
+    }
+
+    async createStockBatch(context, codeVariant, profitPerUnit, quantityAdded) {
+        const batchCode = `WA-${randomUUID()}`;
+        const data = this._buildData(context, {
+            _id: batchCode,
+            batchCode,
+            codeVariant: this._normalizeValue(codeVariant),
+            profitPerUnit,
+            quantityAdded,
+            sourceSystem: 'orkut-whatsapp',
+            status: 'completed'
+        });
+
+        await StockBatchModel.create(data);
+        return batchCode;
+    }
+
+    async claimStock(context, codeVariant, reservation) {
+        const resolvedContext = await this._ensureContext(context);
+        const normalizedCode = this._normalizeValue(codeVariant);
+        const ownerFilter = this._buildFilter(resolvedContext, { codeVariant: normalizedCode });
+        const tracked = await this.model.findOneAndUpdate(
+            {
+                ...ownerFilter,
+                stockSchemaVersion: 2,
+                stockState: 'available'
+            },
+            {
+                $set: {
+                    stockState: 'reserved',
+                    reservationToken: reservation.token,
+                    reservedTransactionId: reservation.transactionId ?? null,
+                    reservedOrderItemId: reservation.orderItemId ?? null,
+                    reservedAt: new Date(),
+                    reservationExpiresAt: reservation.expiresAt ?? null
+                },
+                $inc: { stateRevision: 1 }
+            },
+            { sort: { availableAt: 1, createdAt: 1, _id: 1 }, new: true }
+        );
+
+        if (tracked) return tracked;
+
+        return await this.model.findOneAndDelete(
+            { ...ownerFilter, stockSchemaVersion: { $exists: false }, soldAt: null },
+            { sort: { createdAt: 1, _id: 1 } }
+        );
+    }
+
+    async releaseClaim(context, stockId, token) {
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, { _id: stockId });
+        return await this.model.updateOne(
+            { ...ownerFilter, stockSchemaVersion: 2, stockState: 'reserved', reservationToken: token },
+            {
+                $set: { stockState: 'available', availableAt: new Date() },
+                $inc: { stateRevision: 1 },
+                $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
+            }
+        );
+    }
+
+    async finalizeClaim(context, stockId, token, transactionId, orderItemId = null) {
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, { _id: stockId });
+        return await this.model.updateOne(
+            { ...ownerFilter, stockSchemaVersion: 2, stockState: 'reserved', reservationToken: token },
+            {
+                $set: { stockState: 'sold', soldAt: new Date(), soldTransactionId: transactionId, soldOrderItemId: orderItemId },
+                $inc: { stateRevision: 1 },
+                $unset: { reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
+            }
+        );
+    }
+
+    async cycleStock(context, stockId, token) {
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, { _id: stockId });
+        return await this.model.updateOne(
+            { ...ownerFilter, stockSchemaVersion: 2, stockState: 'sold', reservationToken: token },
+            {
+                $set: { stockState: 'available', availableAt: new Date(), lastCycledAt: new Date() },
+                $inc: { stateRevision: 1, cycleGeneration: 1 }
+            }
+        );
+    }
+
     /**
      * Find all stock for a variant (case-insensitive codeVariant)
      * @param {Object} context - Repository context
@@ -30,7 +151,7 @@ class StockRepository extends BaseRepository {
      */
     async findByCodeVariant(context, codeVariant, options = {}) {
         const defaultOptions = { sort: { createdAt: 1 }, ...options };
-        return await this.find(context, { codeVariant }, defaultOptions);
+        return await this.find(context, this._withAvailabilityFilter({ codeVariant }), defaultOptions);
     }
 
     /**
@@ -40,7 +161,8 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<number>} - Stock count
      */
     async countStock(context, codeVariant) {
-        return await this.count(context, { codeVariant });
+        await this._releaseExpiredReservations(context, { codeVariant: this._normalizeValue(codeVariant) });
+        return await this.count(context, this._withAvailabilityFilter({ codeVariant }));
     }
 
     /**
@@ -52,9 +174,19 @@ class StockRepository extends BaseRepository {
      * @param {Date|null} expires_at - Expiry date for cyclable stock (null = no expiry)
      * @returns {Promise<Object>} - Created stock document
      */
-    async addStock(context, codeVariant, dataStock, profit = 0, expires_at = null) {
+    async addStock(context, codeVariant, dataStock, profit = 0, expires_at = null, lineage = {}) {
         const doc = { codeVariant, dataStock, profit };
         if (expires_at) doc.expires_at = expires_at;
+        Object.assign(doc, {
+            unitCost: lineage.unitCost ?? null,
+            stockBatchId: lineage.stockBatchId ?? null,
+            stockOriginId: lineage.stockOriginId ?? randomUUID(),
+            stockSchemaVersion: 2,
+            stockState: 'available',
+            stateRevision: 0,
+            availableAt: new Date(),
+            cycleGeneration: lineage.cycleGeneration ?? 0
+        });
         return await this.create(context, doc);
     }
 
@@ -80,7 +212,17 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Object>} - Delete result
      */
     async removeStockByData(context, dataStock) {
-        return await this.deleteOne(context, { dataStock });
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, { dataStock });
+        const tracked = await this.model.findOneAndUpdate(
+            { ...ownerFilter, stockSchemaVersion: 2, stockState: 'available' },
+            { $set: { stockState: 'removed', removedAt: new Date() }, $inc: { stateRevision: 1 } },
+            { new: true }
+        );
+
+        if (tracked) return { acknowledged: true, deletedCount: 0, modifiedCount: 1, value: tracked };
+
+        return await this.deleteOne(context, { dataStock, stockSchemaVersion: { $exists: false }, soldAt: null });
     }
 
     /**
@@ -91,7 +233,17 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Object>} - Delete result
      */
     async removeStock(context, codeVariant, dataStock) {
-        return await this.deleteOne(context, { codeVariant, dataStock });
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, { codeVariant, dataStock });
+        const tracked = await this.model.findOneAndUpdate(
+            { ...ownerFilter, stockSchemaVersion: 2, stockState: 'available' },
+            { $set: { stockState: 'removed', removedAt: new Date() }, $inc: { stateRevision: 1 } },
+            { new: true }
+        );
+
+        if (tracked) return { acknowledged: true, deletedCount: 0, modifiedCount: 1, value: tracked };
+
+        return await this.deleteOne(context, { codeVariant, dataStock, stockSchemaVersion: { $exists: false }, soldAt: null });
     }
 
     /**
@@ -101,7 +253,7 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Object|null>} - First stock item or null
      */
     async getFirstAvailableStock(context, codeVariant) {
-        const stocks = await this.find(context, { codeVariant }, { sort: { createdAt: 1 }, limit: 1 });
+        const stocks = await this.find(context, this._withAvailabilityFilter({ codeVariant }), { sort: { createdAt: 1 }, limit: 1 });
         return stocks.length > 0 ? stocks[0] : null;
     }
 
@@ -115,7 +267,14 @@ class StockRepository extends BaseRepository {
         const stock = await this.getFirstAvailableStock(context, codeVariant);
 
         if (stock) {
-            await this.deleteOne(context, { _id: stock._id });
+            if (stock.stockSchemaVersion === 2) {
+                await this.model.updateOne(
+                    { _id: stock._id, stockSchemaVersion: 2, stockState: 'available' },
+                    { $set: { stockState: 'removed', removedAt: new Date() }, $inc: { stateRevision: 1 } }
+                );
+            } else {
+                await this.deleteOne(context, { _id: stock._id, stockSchemaVersion: { $exists: false }, soldAt: null });
+            }
         }
 
         return stock;
@@ -132,7 +291,7 @@ class StockRepository extends BaseRepository {
      */
     async pullMultipleStocks(context, codeVariant, quantity) {
         // Batch find the first N items (FIFO by createdAt)
-        const stocks = await this.find(context, { codeVariant }, {
+        const stocks = await this.find(context, this._withAvailabilityFilter({ codeVariant }), {
             sort: { createdAt: 1 },
             limit: quantity
         });
@@ -140,10 +299,19 @@ class StockRepository extends BaseRepository {
         if (stocks.length === 0) return [];
 
         // Batch delete by IDs (single query)
-        const stockIds = stocks.map(s => s._id);
-        const deleteResult = await this.deleteMany(context, { _id: { $in: stockIds } });
+        const trackedIds = stocks.filter(s => s.stockSchemaVersion === 2).map(s => s._id);
+        const legacyIds = stocks.filter(s => s.stockSchemaVersion !== 2).map(s => s._id);
+        const trackedResult = trackedIds.length > 0
+            ? await this.model.updateMany(
+                { _id: { $in: trackedIds }, stockSchemaVersion: 2, stockState: 'available' },
+                { $set: { stockState: 'removed', removedAt: new Date() }, $inc: { stateRevision: 1 } }
+            )
+            : { modifiedCount: 0 };
+        const legacyResult = legacyIds.length > 0
+            ? await this.deleteMany(context, { _id: { $in: legacyIds }, stockSchemaVersion: { $exists: false }, soldAt: null })
+            : { deletedCount: 0 };
 
-        return stocks.slice(0, deleteResult.deletedCount);
+        return stocks.slice(0, trackedResult.modifiedCount + legacyResult.deletedCount);
     }
 
     /**
@@ -153,7 +321,15 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Object>} - Delete result
      */
     async deleteAllStockByVariant(context, codeVariant) {
-        return await this.deleteMany(context, { codeVariant });
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, { codeVariant, stockSchemaVersion: 2, stockState: 'available' });
+        const tracked = await this.model.updateMany(
+            ownerFilter,
+            { $set: { stockState: 'removed', removedAt: new Date() }, $inc: { stateRevision: 1 } }
+        );
+        const legacy = await this.deleteMany(context, { codeVariant, stockSchemaVersion: { $exists: false }, soldAt: null });
+
+        return { acknowledged: true, deletedCount: legacy.deletedCount, modifiedCount: tracked.modifiedCount };
     }
 
     /**
@@ -183,7 +359,7 @@ class StockRepository extends BaseRepository {
         const normalizedCode = this._normalizeValue(codeVariant);
         const defaultOptions = { sort: { createdAt: 1 }, ...options };
 
-        let query = this.model.find({ codeVariant: normalizedCode, ownerId: null });
+        let query = this.model.find(this._withAvailabilityFilter({ codeVariant: normalizedCode, ownerId: null }));
         if (defaultOptions.sort) query = query.sort(defaultOptions.sort);
         if (defaultOptions.limit) query = query.limit(defaultOptions.limit);
         return await query.exec();
@@ -196,7 +372,82 @@ class StockRepository extends BaseRepository {
      */
     async countPlatformStock(codeVariant) {
         const normalizedCode = this._normalizeValue(codeVariant);
-        return await this.model.countDocuments({ codeVariant: normalizedCode, ownerId: null });
+        await this.model.updateMany(
+            {
+                ownerId: null,
+                stockSchemaVersion: 2,
+                stockState: 'reserved',
+                reservationExpiresAt: { $lte: new Date() }
+            },
+            {
+                $set: { stockState: 'available', availableAt: new Date() },
+                $inc: { stateRevision: 1 },
+                $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
+            }
+        );
+        return await this.model.countDocuments(this._withAvailabilityFilter({ codeVariant: normalizedCode, ownerId: null }));
+    }
+
+    async claimPlatformStock(codeVariant, reservation) {
+        const normalizedCode = this._normalizeValue(codeVariant);
+        const filter = { codeVariant: normalizedCode, ownerId: null };
+        const tracked = await this.model.findOneAndUpdate(
+            {
+                ...filter,
+                stockSchemaVersion: 2,
+                stockState: 'available'
+            },
+            {
+                $set: {
+                    stockState: 'reserved',
+                    reservationToken: reservation.token,
+                    reservedTransactionId: reservation.transactionId ?? null,
+                    reservedOrderItemId: reservation.orderItemId ?? null,
+                    reservedAt: new Date(),
+                    reservationExpiresAt: reservation.expiresAt ?? null
+                },
+                $inc: { stateRevision: 1 }
+            },
+            { sort: { availableAt: 1, createdAt: 1, _id: 1 }, new: true }
+        );
+
+        if (tracked) return tracked;
+        return await this.model.findOneAndDelete(
+            { ...filter, stockSchemaVersion: { $exists: false }, soldAt: null },
+            { sort: { createdAt: 1, _id: 1 } }
+        );
+    }
+
+    async releasePlatformClaim(stockId, token) {
+        return await this.model.updateOne(
+            { _id: stockId, ownerId: null, stockSchemaVersion: 2, stockState: 'reserved', reservationToken: token },
+            {
+                $set: { stockState: 'available', availableAt: new Date() },
+                $inc: { stateRevision: 1 },
+                $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
+            }
+        );
+    }
+
+    async finalizePlatformClaim(stockId, token, transactionId, orderItemId = null) {
+        return await this.model.updateOne(
+            { _id: stockId, ownerId: null, stockSchemaVersion: 2, stockState: 'reserved', reservationToken: token },
+            {
+                $set: { stockState: 'sold', soldAt: new Date(), soldTransactionId: transactionId, soldOrderItemId: orderItemId },
+                $inc: { stateRevision: 1 },
+                $unset: { reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
+            }
+        );
+    }
+
+    async cyclePlatformStock(stockId, token) {
+        return await this.model.updateOne(
+            { _id: stockId, ownerId: null, stockSchemaVersion: 2, stockState: 'sold', reservationToken: token },
+            {
+                $set: { stockState: 'available', availableAt: new Date(), lastCycledAt: new Date() },
+                $inc: { stateRevision: 1, cycleGeneration: 1 }
+            }
+        );
     }
 
     /**
@@ -206,7 +457,14 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Object>} - Delete result (check deletedCount for race condition)
      */
     async deletePlatformStockById(stockId) {
-        return await this.model.deleteOne({ _id: stockId, ownerId: null });
+        const tracked = await this.model.updateOne(
+            { _id: stockId, ownerId: null, stockSchemaVersion: 2, stockState: 'available' },
+            { $set: { stockState: 'removed', removedAt: new Date() }, $inc: { stateRevision: 1 } }
+        );
+
+        if (tracked.modifiedCount > 0) return { acknowledged: true, deletedCount: 0, modifiedCount: tracked.modifiedCount };
+
+        return await this.model.deleteOne({ _id: stockId, ownerId: null, stockSchemaVersion: { $exists: false }, soldAt: null });
     }
 
     /**
@@ -217,9 +475,22 @@ class StockRepository extends BaseRepository {
      * @param {Date|null} expires_at - Expiry date for cyclable stock (null = no expiry)
      * @returns {Promise<Object>} - Created stock document
      */
-    async addPlatformStock(codeVariant, dataStock, profit = 0, expires_at = null) {
+    async addPlatformStock(codeVariant, dataStock, profit = 0, expires_at = null, lineage = {}) {
         const normalizedCode = this._normalizeValue(codeVariant);
-        const doc = { codeVariant: normalizedCode, dataStock, profit, ownerId: null };
+        const doc = {
+            codeVariant: normalizedCode,
+            dataStock,
+            profit,
+            ownerId: null,
+            unitCost: lineage.unitCost ?? null,
+            stockBatchId: lineage.stockBatchId ?? null,
+            stockOriginId: lineage.stockOriginId ?? randomUUID(),
+            stockSchemaVersion: 2,
+            stockState: 'available',
+            stateRevision: 0,
+            availableAt: new Date(),
+            cycleGeneration: lineage.cycleGeneration ?? 0
+        };
         if (expires_at) doc.expires_at = expires_at;
         const document = new this.model(doc);
         return await document.save();
@@ -232,9 +503,10 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Map<string, number>>} - Map of codeVariant → stock count
      */
     async countStockBatch(context, codeVariants) {
+        await this._releaseExpiredReservations(context);
         const normalized = codeVariants.map(cv => this._normalizeValue(cv));
         const results = await this.aggregate(context, [
-            { $match: { codeVariant: { $in: normalized } } },
+            { $match: this._withAvailabilityFilter({ codeVariant: { $in: normalized } }) },
             { $group: { _id: '$codeVariant', count: { $sum: 1 } } }
         ]);
         const map = new Map();
@@ -256,7 +528,7 @@ class StockRepository extends BaseRepository {
         if (!codeVariants || codeVariants.length === 0) return new Map();
         const normalized = codeVariants.map(cv => this._normalizeValue(cv));
         const results = await this.aggregate(context, [
-            { $match: { codeVariant: { $in: normalized } } },
+            { $match: this._withAvailabilityFilter({ codeVariant: { $in: normalized } }) },
             { $group: { _id: '$codeVariant', latest: { $max: '$createdAt' } } }
         ]);
         const map = new Map();
@@ -277,7 +549,7 @@ class StockRepository extends BaseRepository {
         if (!codeVariants || codeVariants.length === 0) return new Map();
         const normalized = codeVariants.map(cv => this._normalizeValue(cv));
         const results = await this.model.aggregate([
-            { $match: { codeVariant: { $in: normalized }, ownerId: null } },
+            { $match: this._withAvailabilityFilter({ codeVariant: { $in: normalized }, ownerId: null }) },
             { $group: { _id: '$codeVariant', latest: { $max: '$createdAt' } } }
         ]);
         const map = new Map();
@@ -293,9 +565,22 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Map<string, number>>} - Map of codeVariant → stock count
      */
     async countPlatformStockBatch(codeVariants) {
+        await this.model.updateMany(
+            {
+                ownerId: null,
+                stockSchemaVersion: 2,
+                stockState: 'reserved',
+                reservationExpiresAt: { $lte: new Date() }
+            },
+            {
+                $set: { stockState: 'available', availableAt: new Date() },
+                $inc: { stateRevision: 1 },
+                $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
+            }
+        );
         const normalized = codeVariants.map(cv => this._normalizeValue(cv));
         const results = await this.model.aggregate([
-            { $match: { codeVariant: { $in: normalized }, ownerId: null } },
+            { $match: this._withAvailabilityFilter({ codeVariant: { $in: normalized }, ownerId: null }) },
             { $group: { _id: '$codeVariant', count: { $sum: 1 } } }
         ]);
         const map = new Map();

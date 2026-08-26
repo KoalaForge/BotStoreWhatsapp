@@ -102,13 +102,10 @@ const handleStockDataInput = async (ctx) => {
             return ctx.reply('*Data stock kosong.* Kirim ulang data stock (satu per baris):');
         }
 
+        const batchCode = await stockRepository.createStockBatch(ctx, codeVariant, profit, lines.length);
         let count = 0;
         for (const line of lines) {
-            await stockRepository.create(ctx, {
-                codeVariant: codeVariant,
-                dataStock: line,
-                profit: profit,
-            });
+            await stockRepository.addStock(ctx, codeVariant, line, profit, null, { stockBatchId: batchCode });
             count++;
         }
 

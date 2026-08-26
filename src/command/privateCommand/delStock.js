@@ -90,7 +90,7 @@ const handleDelStockDataInput = async (ctx) => {
 
         let count = 0;
         for (const stock of stocks) {
-            await stockRepository.deleteOne(ctx, { dataStock: stock });
+            await stockRepository.removeStock(ctx, state.codeVariant, stock);
             count++;
         }
 

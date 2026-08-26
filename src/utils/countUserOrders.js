@@ -9,6 +9,7 @@ async function countUserOrders(context, telegramId) {
             {
                 $match: {
                     user_id: telegramId,
+                    transaction_type: 'product',
                     isSuccess: true,
                     isCanceled: false
                 }
@@ -36,6 +37,7 @@ async function countSoldStocks(context) {
                 $match: {
                     isSuccess: true,
                     isCanceled: false,
+                    transaction_type: 'product',
                     orderQuantity: { $exists: true, $ne: null }
                 }
             },

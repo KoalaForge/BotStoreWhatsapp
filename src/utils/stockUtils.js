@@ -16,10 +16,7 @@ const getStockTerjual = async (context, code) => {
         productCode: code,
         isSuccess: true,
         isCanceled: false,
-        $or: [
-            { transaction_type: 'product' },
-            { transaction_type: { $exists: false } }
-        ]
+        transaction_type: 'product'
     };
     const ownerId = context?.ownerId ?? null;
     if (ownerId) match.ownerId = ownerId;
@@ -46,10 +43,7 @@ const getStockTerjualBatch = async (context, codes) => {
         productCode: { $in: codes },
         isSuccess: true,
         isCanceled: false,
-        $or: [
-            { transaction_type: 'product' },
-            { transaction_type: { $exists: false } }
-        ]
+        transaction_type: 'product'
     };
     const ownerId = context?.ownerId ?? null;
     if (ownerId) match.ownerId = ownerId;
