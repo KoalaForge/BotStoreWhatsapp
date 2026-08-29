@@ -57,8 +57,9 @@ class StockRepository extends BaseRepository {
     }
 
     async createStockBatch(context, codeVariant, profitPerUnit, quantityAdded) {
+        const resolvedContext = await this._ensureContext(context);
         const batchCode = `WA-${randomUUID()}`;
-        const data = this._buildData(context, {
+        const data = this._buildData(resolvedContext, {
             _id: batchCode,
             batchCode,
             codeVariant: this._normalizeValue(codeVariant),
