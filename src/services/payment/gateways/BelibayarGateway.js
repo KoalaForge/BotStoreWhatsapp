@@ -118,11 +118,28 @@ class BelibayarGateway extends BasePaymentGateway {
 
   async _post(path, body) {
     const rawBody = JSON.stringify(body);
-    const { data } = await axiosInstance.post(`${this.baseUrl}${path}`, rawBody, {
-      headers: this._postHeaders(rawBody),
-      transformRequest: [(value) => value],
-    });
-    return data;
+    try {
+      const response = await axiosInstance.post(`${this.baseUrl}${path}`, rawBody, {
+        headers: this._postHeaders(rawBody),
+        transformRequest: [(value) => value],
+      });
+      console.log('[Belibayar] API response:', {
+        path,
+        status: response.status,
+        statusText: response.statusText,
+        data: response.data,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('[Belibayar] API error response:', {
+        path,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+      });
+      throw error;
+    }
   }
 
   _responseData(response) {
