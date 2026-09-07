@@ -4,6 +4,9 @@ const StockBatchModel = require('../database/models/stockBatchModels');
 const IsolationStrategy = require('./IsolationStrategy');
 const { randomUUID } = require('crypto');
 
+const DEFAULT_RESERVATION_TTL_MS = 15 * 60 * 1000;
+const MALFORMED_RESERVATION_GRACE_MS = 15 * 60 * 1000;
+
 /**
  * Stock Repository
  * Handles stock CRUD with owner-level isolation
@@ -37,23 +40,58 @@ class StockRepository extends BaseRepository {
         return { $and: [filter, this._availabilityFilter()] };
     }
 
-    async _releaseExpiredReservations(context, ownerFilter = {}) {
-        const resolvedContext = await this._ensureContext(context);
-        const scopedFilter = this._buildFilter(resolvedContext, ownerFilter);
+    _prepareReservation(reservation) {
+        if (!reservation?.token || typeof reservation.token !== 'string') {
+            throw new Error('Stock reservation requires a valid token');
+        }
 
-        return await this.model.updateMany(
-            {
-                ...scopedFilter,
-                stockSchemaVersion: 2,
-                stockState: 'reserved',
-                reservationExpiresAt: { $lte: new Date() }
-            },
+        const reservedAt = new Date();
+        const requestedExpiry = reservation.expiresAt instanceof Date
+            ? reservation.expiresAt
+            : new Date(reservation.expiresAt);
+        const reservationExpiresAt = Number.isFinite(requestedExpiry.getTime()) && requestedExpiry > reservedAt
+            ? requestedExpiry
+            : new Date(reservedAt.getTime() + DEFAULT_RESERVATION_TTL_MS);
+
+        return { reservedAt, reservationExpiresAt };
+    }
+
+    _expiredReservationFilter(filter = {}) {
+        const now = new Date();
+        const malformedBefore = new Date(now.getTime() - MALFORMED_RESERVATION_GRACE_MS);
+
+        return {
+            ...filter,
+            stockSchemaVersion: 2,
+            stockState: 'reserved',
+            $or: [
+                { reservationExpiresAt: { $type: 'date', $lte: now } },
+                {
+                    $and: [
+                        { reservationExpiresAt: { $not: { $type: 'date' } } },
+                        { updatedAt: { $lte: malformedBefore } }
+                    ]
+                }
+            ]
+        };
+    }
+
+    _releaseReservations(filter) {
+        return this.model.updateMany(
+            this._expiredReservationFilter(filter),
             {
                 $set: { stockState: 'available', availableAt: new Date() },
                 $inc: { stateRevision: 1 },
                 $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
             }
         );
+    }
+
+    async _releaseExpiredReservations(context, ownerFilter = {}) {
+        const resolvedContext = await this._ensureContext(context);
+        const scopedFilter = this._buildFilter(resolvedContext, ownerFilter);
+
+        return await this._releaseReservations(scopedFilter);
     }
 
     async createStockBatch(context, codeVariant, profitPerUnit, quantityAdded) {
@@ -77,6 +115,7 @@ class StockRepository extends BaseRepository {
         const resolvedContext = await this._ensureContext(context);
         const normalizedCode = this._normalizeValue(codeVariant);
         const ownerFilter = this._buildFilter(resolvedContext, { codeVariant: normalizedCode });
+        const { reservedAt, reservationExpiresAt } = this._prepareReservation(reservation);
         const tracked = await this.model.findOneAndUpdate(
             {
                 ...ownerFilter,
@@ -89,8 +128,8 @@ class StockRepository extends BaseRepository {
                     reservationToken: reservation.token,
                     reservedTransactionId: reservation.transactionId ?? null,
                     reservedOrderItemId: reservation.orderItemId ?? null,
-                    reservedAt: new Date(),
-                    reservationExpiresAt: reservation.expiresAt ?? null
+                    reservedAt,
+                    reservationExpiresAt
                 },
                 $inc: { stateRevision: 1 }
             },
@@ -373,25 +412,14 @@ class StockRepository extends BaseRepository {
      */
     async countPlatformStock(codeVariant) {
         const normalizedCode = this._normalizeValue(codeVariant);
-        await this.model.updateMany(
-            {
-                ownerId: null,
-                stockSchemaVersion: 2,
-                stockState: 'reserved',
-                reservationExpiresAt: { $lte: new Date() }
-            },
-            {
-                $set: { stockState: 'available', availableAt: new Date() },
-                $inc: { stateRevision: 1 },
-                $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
-            }
-        );
+        await this._releaseReservations({ ownerId: null, codeVariant: normalizedCode });
         return await this.model.countDocuments(this._withAvailabilityFilter({ codeVariant: normalizedCode, ownerId: null }));
     }
 
     async claimPlatformStock(codeVariant, reservation) {
         const normalizedCode = this._normalizeValue(codeVariant);
         const filter = { codeVariant: normalizedCode, ownerId: null };
+        const { reservedAt, reservationExpiresAt } = this._prepareReservation(reservation);
         const tracked = await this.model.findOneAndUpdate(
             {
                 ...filter,
@@ -404,8 +432,8 @@ class StockRepository extends BaseRepository {
                     reservationToken: reservation.token,
                     reservedTransactionId: reservation.transactionId ?? null,
                     reservedOrderItemId: reservation.orderItemId ?? null,
-                    reservedAt: new Date(),
-                    reservationExpiresAt: reservation.expiresAt ?? null
+                    reservedAt,
+                    reservationExpiresAt
                 },
                 $inc: { stateRevision: 1 }
             },
@@ -566,19 +594,7 @@ class StockRepository extends BaseRepository {
      * @returns {Promise<Map<string, number>>} - Map of codeVariant → stock count
      */
     async countPlatformStockBatch(codeVariants) {
-        await this.model.updateMany(
-            {
-                ownerId: null,
-                stockSchemaVersion: 2,
-                stockState: 'reserved',
-                reservationExpiresAt: { $lte: new Date() }
-            },
-            {
-                $set: { stockState: 'available', availableAt: new Date() },
-                $inc: { stateRevision: 1 },
-                $unset: { reservationToken: 1, reservedTransactionId: 1, reservedOrderItemId: 1, reservedAt: 1, reservationExpiresAt: 1 }
-            }
-        );
+        await this._releaseReservations({ ownerId: null });
         const normalized = codeVariants.map(cv => this._normalizeValue(cv));
         const results = await this.model.aggregate([
             { $match: this._withAvailabilityFilter({ codeVariant: { $in: normalized }, ownerId: null }) },

@@ -43,7 +43,11 @@ async function handleExpiredTransaction(sock, context, transaction, givenTimeStr
                 }
             }));
         }
+    } catch (err) {
+        console.log(clc.red.bold("[ ERROR ]") + ` [${moment().format('HH:mm:ss')}]:` + clc.blueBright(` Gagal menghapus pesan transaksi ${transaction.transactionId}: ${err.message}`));
+    }
 
+    try {
         // Owner top-up: ownerId is null in DB, use unscoped expire
         const isOwnerTopUp = !modeService.isSingleMode() && transaction.transaction_type === 'topup' && transaction.ownerId === null;
         if (isOwnerTopUp) {

@@ -71,12 +71,20 @@ async function pullStockReseller(ctx, codeVariant, quantity) {
     }
 
     const uniqCode = generateRandomCode();
-    const reservation = { token: randomUUID(), transactionId: uniqCode, orderItemId: null, expiresAt: null };
+    const reservation = {
+        token: randomUUID(),
+        transactionId: uniqCode,
+        orderItemId: null,
+        expiresAt: new Date(Date.now() + (15 * 60 * 1000))
+    };
     const stockResult = await orderService.processStockForPlatform(codeVariant, quantity, {
         productCode: resellerProduct.code,
         productName: resellerProduct.name,
         variantName: config.custom_name || platformVariant.name
     }, reservation);
+    let claimFinalized = false;
+
+    try {
 
     const displayVariantName = config.custom_name || platformVariant.name;
     const formattedDate = moment().tz('Asia/Jakarta').format('YYYY-MM-DD HH:mm:ss');
@@ -181,6 +189,7 @@ async function pullStockReseller(ctx, codeVariant, quantity) {
         isReseller: true,
         transactionId: uniqCode
     });
+    claimFinalized = true;
 
     const ProductVariantSnkModel = require('../../database/models/productVariantSnkModels');
     const getVariantProductSnk = await ProductVariantSnkModel.findOne({ codeVariant: codeVariant, ownerId: null });
@@ -212,6 +221,15 @@ async function pullStockReseller(ctx, codeVariant, quantity) {
     });
 
     console.log(clc.green.bold("[ INFO ]") + ` [${moment().format('HH:mm:ss')}]:` + clc.blueBright(` Reseller pullstock berhasil: ${uniqCode}, saldo sisa: ${deductResult.newBalance}`));
+    } catch (err) {
+        if (!claimFinalized) {
+            await orderService.restoreClaimedStock(ctx, {
+                stockItems: stockResult.stockItems,
+                isReseller: true
+            });
+        }
+        throw err;
+    }
 }
 
 /**
@@ -219,6 +237,9 @@ async function pullStockReseller(ctx, codeVariant, quantity) {
  * Usage: .pullstock <codeVariant> [quantity]
  */
 const pullStock = async (ctx) => {
+    let claimedStockItems = null;
+    let claimFinalized = false;
+
     try {
         if (!await requireAdmin(ctx)) return;
 
@@ -264,13 +285,19 @@ const pullStock = async (ctx) => {
             return ctx.reply(`Produk variant dengan kode *${codeVariant}* hanya tersisa ${totalStockAvailable}x`);
         }
 
-        const reservation = { token: randomUUID(), transactionId: uniqCode, orderItemId: null, expiresAt: null };
+        const reservation = {
+            token: randomUUID(),
+            transactionId: uniqCode,
+            orderItemId: null,
+            expiresAt: new Date(Date.now() + (15 * 60 * 1000))
+        };
         const stockResult = await orderService.processStockForItems(ctx, codeVariant, parseInt(quantity), {
             productCode: getVariantProduct.code,
             productName: getProduct.name,
             variantName: getVariantProduct.name
         }, reservation);
         const { dataStock, profit, stockItems } = stockResult;
+        claimedStockItems = stockItems;
 
         const formattedDate = moment().tz('Asia/Jakarta').format('YYYY-MM-DD HH:mm:ss');
 
@@ -311,6 +338,7 @@ const pullStock = async (ctx) => {
             isReseller: false,
             transactionId: uniqCode
         });
+        claimFinalized = true;
 
         await cycleService.setCycleEligibilityByTransactionId(ctx, uniqCode, new Date());
 
@@ -333,6 +361,12 @@ const pullStock = async (ctx) => {
         console.log(clc.green.bold("[ INFO ]") + ` [${moment().format('HH:mm:ss')}]:` + clc.blueBright(` Berhasil mengirim data produk ke ${userJID} (${uniqCode})`));
 
     } catch (err) {
+        if (claimedStockItems && !claimFinalized) {
+            await orderService.restoreClaimedStock(ctx, {
+                stockItems: claimedStockItems,
+                isReseller: false
+            }).catch((restoreErr) => console.error('[ pullStock ] restore failed:', restoreErr.message));
+        }
         console.error(`[ ERROR ] [${moment().format('YYYY-MM-DD HH:mm:ss')}]:`, {
             userId: ctx.from,
             error: err.message,
