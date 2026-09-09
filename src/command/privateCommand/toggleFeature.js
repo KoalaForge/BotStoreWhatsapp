@@ -141,4 +141,54 @@ const toggleWelcome = async (ctx) => {
     }
 };
 
-module.exports = { toggleSaldo, toggleWelcome };
+const toggleRating = async (ctx) => {
+    if (!await requireAdmin(ctx)) return;
+
+    try {
+        const args = ctx.commandArgs || [];
+        const settings = await settingsService.getSettings(ctx);
+        const current = settings?.ratingEnabled !== false;
+
+        if (args.length === 0) {
+            return ctx.reply(
+                `*Pengaturan Fitur Rating Produk*\n\n` +
+                `*Status saat ini:* ${_statusLabel(current)}\n\n` +
+                `.togglerating on - Aktifkan rating produk\n` +
+                `.togglerating off - Nonaktifkan rating produk\n\n` +
+                `Tutorial: .caratogglerating`
+            );
+        }
+
+        const value = args[0].toLowerCase().trim();
+        if (args.length !== 1 || !VALID_VALUES.includes(value)) {
+            return ctx.reply('*Nilai tidak valid!*\n\nGunakan on atau off.\nContoh: .togglerating on');
+        }
+
+        const enabled = value === 'on';
+        if (enabled === current) {
+            return ctx.reply(
+                `*Tidak ada perubahan*\n\nFitur Rating Produk sudah dalam status *${enabled ? 'Aktif' : 'Nonaktif'}*.`
+            );
+        }
+
+        await settingsService.updateSettings(ctx, { ratingEnabled: enabled });
+        await ctx.reply(
+            `*Fitur Rating Produk berhasil ${enabled ? 'diaktifkan' : 'dinonaktifkan'}*\n\n` +
+            `*Status baru:* ${_statusLabel(enabled)}`
+        );
+        console.log(
+            clc.green.bold('[ SUCCESS ]') +
+            ` [${moment().format('HH:mm:ss')}]: ` +
+            clc.blueBright(`ratingEnabled set to '${enabled}' by user ${ctx.from}`)
+        );
+    } catch (err) {
+        await ctx.reply('*Terjadi kesalahan, silakan coba lagi.*');
+        console.log(
+            clc.red.bold('[ ERROR ]') +
+            ` [${moment().format('HH:mm:ss')}]: ` +
+            clc.redBright(`Error in toggleFeature/toggleRating: ${err.message}`)
+        );
+    }
+};
+
+module.exports = { toggleSaldo, toggleWelcome, toggleRating };

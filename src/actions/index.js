@@ -6,6 +6,7 @@ const showAllProductVariant = require('./showAllProductVariant');
 const backToProductList = require('./backToProductList');
 const handleProductList = require('./handleProductList');
 const handleProductVariantRefresh = require('./handleProductVariantRefresh');
+const handleProductRating = require('./handleProductRating');
 
 // Payment actions
 const payWithQris = require('./payWithQris');
@@ -42,6 +43,7 @@ module.exports = {
     backToProductList,
     handleProductList,
     handleProductVariantRefresh,
+    handleProductRating,
     voucherActions,
     handleBuyerNotes,
 

@@ -17,6 +17,20 @@ const variantSearchService = require('../services/variantSearchService');
 const { formatNotFoundReply } = require('../utils/notFoundReply');
 const variantAccessGuard = require('../services/variantAccessGuard');
 
+async function getRatingSummaries(params) {
+    try {
+        const ratingApiService = require('../services/ratingApiService');
+        return await ratingApiService.getSummaries(params);
+    } catch {
+        return null;
+    }
+}
+
+function getMapValue(map, key) {
+    const normalizedKey = String(key).toLowerCase();
+    return map instanceof Map ? (map.get(key) ?? map.get(normalizedKey)) : (map?.[key] ?? map?.[normalizedKey]);
+}
+
 /**
  * Resolve variant context for both normal and reseller products.
  * Returns all data needed to display an order confirmation.
@@ -151,10 +165,19 @@ async function prepareOrder(ctx, quantity = 1) {
     const subtotal = orderQuantity * effectivePrice;
     const resellerContext = isReseller ? { markupPerUnit, quantity: orderQuantity } : null;
 
-    const [voucherDetails, settings, buyerNotes] = await Promise.all([
+    const ratingKey = `${product.code}|${variant.codeVariant}`;
+    const settings = await settingsService.getSettings(ctx);
+    const [voucherDetails, buyerNotes, ratingSummaries] = await Promise.all([
         orderService.getVoucherDetails(userId, subtotal, resellerContext),
-        settingsService.getSettings(ctx),
-        buyerNotesState.getAppliedNotes(userId)
+        buyerNotesState.getAppliedNotes(userId),
+        settings?.ratingEnabled === false
+            ? Promise.resolve(null)
+            : getRatingSummaries({
+                ownerId: ctx.repositoryContext?.ownerId,
+                botId: ctx.repositoryContext?.botId ?? ctx.state?.botId ?? null,
+                productCodes: [product.code],
+                variants: [{ productCode: product.code, variantCode: variant.codeVariant }]
+            })
     ]);
     const { voucherCode, voucherDiscount, isCapped, totalPrice } = voucherDetails;
     const saldoEnabled = settings?.saldoEnabled !== false;
@@ -173,7 +196,11 @@ async function prepareOrder(ctx, quantity = 1) {
         subtotal,
         isDiscountCapped: isCapped,
         buyerNotes,
-        tierHint
+        tierHint,
+        ratingSummary: getMapValue(
+            (ratingSummaries?.summaries ?? ratingSummaries)?.variants,
+            ratingKey
+        )
     });
 
     const { menuText, actionMap } = buildOrderMenuText({

@@ -1,4 +1,5 @@
 const command = require('../command/exportCommand');
+const actions = require('../actions');
 
 /**
  * Stub handler for commands not yet implemented.
@@ -37,6 +38,7 @@ function registerCommands(router) {
     router.command('topup', command.topupCommand);
     router.command('buy', command.buyCommand);
     router.command('buynow', command.buyNowCommand);
+    router.command('rating', actions.handleProductRating);
     router.command(['open', 'opengroup', 'openchat'], command.openGroupCommand);
     router.command(['close', 'closegroup', 'closechat'], command.closeGroupCommand);
     router.command('kick', command.kickCommand);
@@ -110,6 +112,7 @@ function registerCommands(router) {
     safeCommand(router, ['listcs', 'daftarcs'], command.listCS);
     safeCommand(router, ['togglesaldo', 'setsaldo'], command.toggleSaldo);
     safeCommand(router, ['togglewelcome', 'setwelcome'], command.toggleWelcome);
+    safeCommand(router, 'togglerating', command.toggleRating);
     safeCommand(router, ['compactlist', 'togglecompactlist'], command.toggleCompactListCommand);
     safeCommand(router, ['autosuggest', 'toggleautosuggest'], command.toggleAutoSuggestCommand);
     safeCommand(router, ['togglerestokinfo', 'togglelastrestock', 'togglerestock'], command.toggleShowLastRestockCommand);
@@ -200,6 +203,7 @@ function registerCommands(router) {
     router.command(['caravoucher'], command.caraVoucher);
     router.command(['caracs'], command.caraCS);
     router.command(['caratoggle', 'caratogglefitur'], command.caraToggleFeature);
+    router.command('caratogglerating', command.caraToggleRating);
     router.command(['caratogglerestokinfo', 'caratogglelastrestock', 'cararestokinfo'], command.caraToggleRestokInfo);
     router.command('caracycle', command.caraCycle);
     router.command(['carabroadcast'], command.caraBroadcast);

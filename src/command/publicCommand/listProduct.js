@@ -16,6 +16,8 @@ const { getStockTerjualBatch } = require('../../utils/stockUtils');
 const { buildGreeting } = require('../../utils/greetingHelper');
 const { getCompanyName } = require('../../utils/getCompanyName');
 const { humanizeRelativeID } = require('../../utils/relativeTime');
+const ratingApiService = require('../../services/ratingApiService');
+const messageFormatter = require('../../utils/waMessageFormatter');
 const {
     renderWelcomeHeader,
     renderPanduanBlock,
@@ -23,6 +25,28 @@ const {
     renderVariantCard,
     renderCompactList
 } = require('../../utils/menuFormatter');
+
+function getMapValue(map, key) {
+    const normalizedKey = String(key).toLowerCase();
+    return map instanceof Map ? (map.get(key) ?? map.get(normalizedKey)) : (map?.[key] ?? map?.[normalizedKey]);
+}
+
+async function getRatingSummaries(ctx, setting, ownerId, products, variantsByProduct) {
+    if (setting?.ratingEnabled === false) return null;
+
+    const variants = products.flatMap((product, index) =>
+        (variantsByProduct[index] || []).map(variant => ({
+            productCode: product.code,
+            variantCode: variant.code
+        }))
+    );
+    return ratingApiService.getSummaries({
+        ownerId,
+        botId: ctx.repositoryContext?.botId ?? ctx.state?.botId ?? null,
+        productCodes: products.map(product => product.code),
+        variants
+    });
+}
 
 const listProduct = async (ctx) => {
     try {
@@ -62,6 +86,14 @@ const listProduct = async (ctx) => {
             const variantsByProductCompact = await Promise.all(
                 allProducts.map(p => buildVariantItems(ctx, p, ownerId))
             );
+            const ratingSummaries = await getRatingSummaries(
+                ctx,
+                setting,
+                ownerId,
+                allProducts,
+                variantsByProductCompact
+            );
+            const summaries = ratingSummaries?.summaries ?? ratingSummaries;
 
             const readyProducts = [];
             const habisProducts = [];
@@ -70,7 +102,15 @@ const listProduct = async (ctx) => {
                 if (variants.length === 0) continue;
                 const hasReady = variants.some(v => (v.stock || 0) > 0);
                 const entry = {
-                    product: { name: allProducts[i].name, variants },
+                    product: {
+                        name: allProducts[i].name,
+                        variants: variants.map(variant => ({
+                            ...variant,
+                            ratingText: messageFormatter.formatRatingSummary(
+                                getMapValue(summaries?.variants, `${allProducts[i].code}|${variant.code}`)
+                            )
+                        }))
+                    },
                     map: { code: allProducts[i].code, name: allProducts[i].name }
                 };
                 if (hasReady) readyProducts.push(entry);
@@ -110,15 +150,17 @@ const listProduct = async (ctx) => {
         const showLastRestock = ctx.isGroup
             ? await groupSettingsService.isShowLastRestockEnabled(ctx, ctx.chat)
             : (setting?.showLastRestockEnabled === true);
-        const [soldMap, ownerRestock, platformRestock] = await Promise.all([
+        const [soldMap, ownerRestock, platformRestock, ratingSummaries] = await Promise.all([
             getStockTerjualBatch(ctx, allVariantCodes),
             showLastRestock
                 ? stockRepository.getLatestRestockBatch(ctx, allVariantCodes)
                 : Promise.resolve(new Map()),
             showLastRestock
                 ? stockRepository.getLatestRestockBatchPlatform(allVariantCodes)
-                : Promise.resolve(new Map())
+                : Promise.resolve(new Map()),
+            getRatingSummaries(ctx, setting, ownerId, allProducts, variantsByProduct)
         ]);
+        const summaries = ratingSummaries?.summaries ?? ratingSummaries;
         // Merge: ownerscoped wins over platform when both have an entry
         // (owner-specific restock is more meaningful than the shared one).
         const restockMap = new Map(platformRestock);
@@ -164,7 +206,10 @@ const listProduct = async (ctx) => {
                     productName: product.name,
                     variant: v,
                     soldCount: sold,
-                    lastRestockText
+                    lastRestockText,
+                    ratingText: messageFormatter.formatRatingSummary(
+                        getMapValue(summaries?.variants, `${product.code}|${v.code}`)
+                    )
                 }));
                 lines.push('');
             }

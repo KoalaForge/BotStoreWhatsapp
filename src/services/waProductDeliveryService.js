@@ -2,6 +2,60 @@ const waMessageFormatter = require('../utils/waMessageFormatter');
 const fileDelivery = require('../utils/fileDelivery');
 const { sendNotification, sendFileNotification } = require('../utils/waNotifications');
 const { withRetry } = require('../utils/waRetry');
+const ratingApiService = require('./ratingApiService');
+const screenState = require('../state/screenState');
+const { stripPhone } = require('../utils/jidHelper');
+const settingsService = require('./settingsService');
+
+async function sendRatingPrompt(sock, jid, context, { transactionId, ratingUserId, productName, variantName }) {
+    try {
+        if (!ratingApiService.isConfigured()) return;
+        const botId = context?.state?.botId
+            ?? context?.repositoryContext?.botId
+            ?? context?.botId
+            ?? null;
+        const settings = await settingsService.getSettingsByBotId(botId).catch(() => null);
+        if (settings?.ratingEnabled === false) return;
+
+        const userId = stripPhone(ratingUserId || jid);
+        const shouldPrompt = await ratingApiService.claimPrompt({
+            transactionId,
+            channelUserId: userId
+        });
+        if (!shouldPrompt) return;
+
+        const canUseShortReply = !screenState.getScreen(userId);
+        const replyInstructions = canUseShortReply
+            ? `Balas 1-5 dalam 15 menit. Setelah memilih nilai, kamu bisa menambahkan komentar opsional.\n` +
+                `Ketik \`lewati\` untuk melewati rating. Rating tetap tersedia selama 24 jam.\n\n` +
+                `Setelah 15 menit, kirim \`.rating ${transactionId} <1-5>\` atau \`.rating skip ${transactionId}\`.`
+            : `Rating tersedia selama 24 jam. Kirim \`.rating ${transactionId} <1-5>\` atau \`.rating skip ${transactionId}\`.`;
+        const choiceHeading = canUseShortReply
+            ? 'Balas dengan salah satu pilihan berikut:'
+            : 'Pilih nilai untuk perintah rating:';
+
+        const prompt = `*Beri Rating Produk*\n\n` +
+            `*Produk:* ${productName}\n` +
+            `*Variasi:* ${variantName}\n\n` +
+            `${choiceHeading}\n` +
+            `1 - Sangat buruk\n` +
+            `2 - Buruk\n` +
+            `3 - Cukup\n` +
+            `4 - Baik\n` +
+            `5 - Sangat baik\n\n` +
+            replyInstructions;
+
+        const sent = await withRetry(async () => {
+            await sock.sendMessage(jid, { text: prompt });
+            return true;
+        });
+        if (sent && canUseShortReply && !screenState.getScreen(userId)) {
+            screenState.setScreen(userId, 'RATING_INPUT', { transactionId });
+        }
+    } catch (error) {
+        console.error(`[rating] Failed to send delivery prompt for ${transactionId}:`, error.message);
+    }
+}
 
 /**
  * Deliver product to customer after successful payment (WhatsApp version).
@@ -14,6 +68,7 @@ const { withRetry } = require('../utils/waRetry');
  */
 async function deliverProductToCustomer(sock, jid, context, {
     transactionId,
+    ratingUserId = null,
     productName,
     variantName,
     orderQuantity,
@@ -31,7 +86,8 @@ async function deliverProductToCustomer(sock, jid, context, {
     voucherDiscount = 0,
     resellerInfo = null,
     buyer_notes = null,
-    appliedTier = null
+    appliedTier = null,
+    ratingEligible = false
 }) {
     let shouldSendAsFile = fileDelivery.shouldDeliverAsFile(orderQuantity);
 
@@ -120,6 +176,10 @@ async function deliverProductToCustomer(sock, jid, context, {
             caption: `Data pembelian untuk transaksi \`${transactionId}\``
         }));
 
+        if (ratingEligible) {
+            await sendRatingPrompt(sock, jid, context, { transactionId, ratingUserId, productName, variantName });
+        }
+
         // Send summary notification to admin
         const adminSummaryMessage = waMessageFormatter.formatProductAdminNotificationSummary({
             transactionId,
@@ -154,6 +214,10 @@ async function deliverProductToCustomer(sock, jid, context, {
         // (customerMessage was already built above for the length check)
 
         await withRetry(() => sock.sendMessage(jid, { text: customerMessage }));
+
+        if (ratingEligible) {
+            await sendRatingPrompt(sock, jid, context, { transactionId, ratingUserId, productName, variantName });
+        }
 
         // Send notification to admin
         const notificationMessage = waMessageFormatter.formatProductAdminNotification({

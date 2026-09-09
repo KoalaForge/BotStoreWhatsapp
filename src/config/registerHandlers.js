@@ -10,6 +10,7 @@ const buyerNotesState = require('../state/buyerNotesState');
 const screenState = require('../state/screenState');
 const menuCooldownState = require('../state/menuCooldownState');
 const transactionService = require('../services/transactionService');
+const { isFeatureEnabled } = require('../utils/featureFlags');
 
 // Top-up preset nominals mapped to number keys 1-4
 const TOPUP_PRESETS = [10000, 25000, 50000, 100000];
@@ -77,15 +78,94 @@ function registerHandlers(router) {
 
     router.use(async (ctx, next) => {
         if (ctx.isCallback) return next();
-        // Global keywords, number-routing, and text shortcuts are DM-only.
-        // Groups go through `.buy` / `.buynow` / `.topup` dot commands instead.
-        if (ctx.isGroup) return next();
 
         const text = ctx.message?.trim();
         if (!text) return next();
 
+        // Durable fallback for rating commands without registerCommands wiring.
+        if (/^\.?rating\s+(?:skip\s+\S+|\S+\s+[1-5])$/i.test(text)) {
+            const ratingState = screenState.getScreen(ctx.from);
+            const result = await actions.handleProductRating(ctx);
+            const parts = text.split(/\s+/);
+            const transactionId = parts[1]?.toLowerCase() === 'skip' ? parts[2] : parts[1];
+            if (result.terminal
+                && screenState.getScreen(ctx.from) === ratingState
+                && ['RATING_INPUT', 'RATING_COMMENT'].includes(ratingState?.screen)
+                && ratingState.transactionId === transactionId) {
+                screenState.clear(ctx.from);
+            }
+            return;
+        }
+
+        // Global keywords, number-routing, and text shortcuts are DM-only.
+        // Groups go through `.buy` / `.buynow` / `.topup` dot commands instead.
+        if (ctx.isGroup) return next();
+
         const lower = text.toLowerCase();
         const userId = ctx.from;
+
+        const ratingState = screenState.getScreen(userId);
+        if (ratingState?.screen === 'RATING_INPUT') {
+            if (!await isFeatureEnabled(ctx, 'ratingEnabled')) {
+                if (screenState.getScreen(userId) === ratingState) screenState.clear(userId);
+                await ctx.reply('Fitur rating sedang dinonaktifkan.');
+                return;
+            }
+            if (lower === 'lewati') {
+                const result = await actions.handleProductRating(ctx, {
+                    transactionId: ratingState.transactionId,
+                    skip: true
+                });
+                const currentState = screenState.getScreen(userId);
+                if (result.terminal
+                    && currentState === ratingState) {
+                    screenState.clear(userId);
+                }
+                return;
+            }
+            if (/^[1-5]$/.test(text)) {
+                if (screenState.getScreen(userId) === ratingState) {
+                    screenState.setScreen(userId, 'RATING_COMMENT', {
+                        transactionId: ratingState.transactionId,
+                        rating: Number(text)
+                    });
+                }
+                await ctx.reply(
+                    `Rating ${text}/5 dipilih.\n\n` +
+                    'Tambahkan komentar (opsional, maksimal 500 karakter), atau ketik `lewati` untuk mengirim tanpa komentar.'
+                );
+                return;
+            }
+            if (/^[1-9]\d*$/.test(text)) {
+                await ctx.reply('Ketik angka 1-5 untuk memberi rating, atau `lewati`.');
+                return;
+            }
+        }
+
+        if (ratingState?.screen === 'RATING_COMMENT') {
+            if (!await isFeatureEnabled(ctx, 'ratingEnabled')) {
+                if (screenState.getScreen(userId) === ratingState) screenState.clear(userId);
+                await ctx.reply('Fitur rating sedang dinonaktifkan.');
+                return;
+            }
+            if (text.length > 500) {
+                await ctx.reply('Komentar maksimal 500 karakter. Silakan kirim komentar yang lebih singkat, atau ketik `lewati`.');
+                return;
+            }
+
+            const result = await actions.handleProductRating(ctx, {
+                transactionId: ratingState.transactionId,
+                rating: ratingState.rating,
+                comment: lower === 'lewati' ? undefined : text,
+                fromCommentStage: true
+            });
+            const currentState = screenState.getScreen(userId);
+            if (result.terminal
+                && currentState === ratingState) {
+                screenState.clear(userId);
+            }
+            return;
+        }
 
         // --- Global keyword: cancel ---
         if (lower === 'batal') {

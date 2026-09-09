@@ -7,6 +7,22 @@ const { formatCurrency } = require("../utils/waFormatter");
 const screenState = require('../state/screenState');
 const { resolveFromCtx, sendWithBanner } = require('../utils/bannerResolver');
 const variantAccessGuard = require('../services/variantAccessGuard');
+const messageFormatter = require('../utils/waMessageFormatter');
+const settingsService = require('../services/settingsService');
+
+async function getRatingSummaries(params) {
+    try {
+        const ratingApiService = require('../services/ratingApiService');
+        return await ratingApiService.getSummaries(params);
+    } catch {
+        return null;
+    }
+}
+
+function getMapValue(map, key) {
+    const normalizedKey = String(key).toLowerCase();
+    return map instanceof Map ? (map.get(key) ?? map.get(normalizedKey)) : (map?.[key] ?? map?.[normalizedKey]);
+}
 
 /**
  * Extract product selector from callback data or message text.
@@ -57,19 +73,33 @@ async function handleProductList(ctx) {
 
         const ownerId = ctx.repositoryContext?.ownerId;
 
-        const [variantItems, banner] = await Promise.all([
+        const [variantItems, settings] = await Promise.all([
             buildVariantItems(ctx, getProduct, ownerId),
-            resolveFromCtx(ctx)
+            settingsService.getSettings(ctx)
         ]);
 
         if (variantItems.length === 0) {
             return ctx.reply('*Variasi belum tersedia untuk produk ini.*\n\nKetik `list` untuk kembali ke daftar produk.');
         }
 
-        // Load sold stock in parallel
         const variantCodes = variantItems.map(item => item.code);
-        const soldMap = await getStockTerjualBatch(ctx, variantCodes);
+        const [soldMap, banner, ratingSummaries] = await Promise.all([
+            getStockTerjualBatch(ctx, variantCodes),
+            resolveFromCtx(ctx),
+            settings?.ratingEnabled === false
+                ? Promise.resolve(null)
+                : getRatingSummaries({
+                    ownerId,
+                    botId: ctx.repositoryContext?.botId ?? ctx.state?.botId ?? null,
+                    productCodes: [getProduct.code],
+                    variants: variantCodes.map(variantCode => ({ productCode: getProduct.code, variantCode }))
+                })
+        ]);
         const totalSoldStock = variantItems.reduce((sum, item) => sum + (soldMap.get(item.code) || 0), 0);
+        const summaries = ratingSummaries?.summaries ?? ratingSummaries;
+        const ratingLine = messageFormatter.formatRatingSummary(
+            getMapValue(summaries?.products, getProduct.code)
+        );
 
         // Build message text with WhatsApp markdown
         let text = "";
@@ -77,6 +107,7 @@ async function handleProductList(ctx) {
         if (getProduct.description) {
             text += `_"${getProduct.description}"_\n`;
         }
+        if (ratingLine) text += `${ratingLine}\n`;
         text += `\nTerjual ${totalSoldStock} pcs\n`;
         text += `\n> Diperbarui pada ${moment().format('HH:mm:ss')} WIB\n`;
 

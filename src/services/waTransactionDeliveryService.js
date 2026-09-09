@@ -428,6 +428,7 @@ async function handleProductDelivery(sock, context, transaction, paymentTimeStri
 
     await waProductDeliveryService.deliverProductToCustomer(sock, transaction.chatId, context, {
         transactionId: transaction.transactionId,
+        ratingUserId: transaction.user_id,
         productName: getProduct.name,
         variantName: displayVariantName,
         orderQuantity: transaction.orderQuantity,
@@ -443,7 +444,8 @@ async function handleProductDelivery(sock, context, transaction, paymentTimeStri
         voucherDiscount: transaction.voucherDiscount || 0,
         resellerInfo,
         buyer_notes: transaction.buyer_notes || null,
-        appliedTier
+        appliedTier,
+        ratingEligible: true
     });
 
     await transactionRepository.updateOne(

@@ -334,6 +334,7 @@ async function confirmPayBalance(ctx) {
             const productDeliveryService = require("../services/waProductDeliveryService");
             await productDeliveryService.deliverProductToCustomer(ctx.sock, ctx.chat, ctx, {
                 transactionId: uniqCode,
+                ratingUserId: userId,
                 productName: product.name,
                 variantName: displayVariantName,
                 orderQuantity: orderAmount,
@@ -350,7 +351,8 @@ async function confirmPayBalance(ctx) {
                 voucherCode: voucherCode,
                 voucherDiscount: voucherDiscount,
                 resellerInfo,
-                buyer_notes: buyerNotes || null
+                buyer_notes: buyerNotes || null,
+                ratingEligible: true
             });
         } catch (deliveryErr) {
             // Fallback: send basic delivery message + admin notification

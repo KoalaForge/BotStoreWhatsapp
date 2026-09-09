@@ -4,6 +4,22 @@ const { getStockTerjualBatch } = require('../utils/stockUtils');
 const { buildVariantItems } = require('../utils/variantDisplayHelper');
 const { formatCurrency } = require('../utils/waFormatter');
 const screenState = require('../state/screenState');
+const messageFormatter = require('../utils/waMessageFormatter');
+const settingsService = require('../services/settingsService');
+
+async function getRatingSummaries(params) {
+    try {
+        const ratingApiService = require('../services/ratingApiService');
+        return await ratingApiService.getSummaries(params);
+    } catch {
+        return null;
+    }
+}
+
+function getMapValue(map, key) {
+    const normalizedKey = String(key).toLowerCase();
+    return map instanceof Map ? (map.get(key) ?? map.get(normalizedKey)) : (map?.[key] ?? map?.[normalizedKey]);
+}
 
 /**
  * Handle variant list refresh in WhatsApp.
@@ -36,22 +52,39 @@ async function handleProductVariantRefresh(ctx) {
     if (!getProduct) return;
 
     const ownerId = ctx.repositoryContext?.ownerId;
-    const variantItems = await buildVariantItems(ctx, getProduct, ownerId);
+    const [variantItems, settings] = await Promise.all([
+        buildVariantItems(ctx, getProduct, ownerId),
+        settingsService.getSettings(ctx)
+    ]);
 
     if (variantItems.length === 0) {
         return ctx.reply('*Variasi belum tersedia untuk produk ini.*\n\nKetik `list` untuk kembali ke daftar produk.');
     }
 
-    // Calculate total sold stock
     const variantCodes = variantItems.map(item => item.code);
-    const soldMap = await getStockTerjualBatch(ctx, variantCodes);
+    const [soldMap, ratingSummaries] = await Promise.all([
+        getStockTerjualBatch(ctx, variantCodes),
+        settings?.ratingEnabled === false
+            ? Promise.resolve(null)
+            : getRatingSummaries({
+                ownerId,
+                botId: ctx.repositoryContext?.botId ?? ctx.state?.botId ?? null,
+                productCodes: [getProduct.code],
+                variants: variantCodes.map(variantCode => ({ productCode: getProduct.code, variantCode }))
+            })
+    ]);
     const totalSoldStock = variantItems.reduce((sum, item) => sum + (soldMap.get(item.code) || 0), 0);
+    const summaries = ratingSummaries?.summaries ?? ratingSummaries;
+    const ratingLine = messageFormatter.formatRatingSummary(
+        getMapValue(summaries?.products, getProduct.code)
+    );
 
     let text = "";
     text += `*${getProduct.name}*\n`;
     if (getProduct.description) {
         text += `_"${getProduct.description}"_\n`;
     }
+    if (ratingLine) text += `${ratingLine}\n`;
     text += `\nTerjual ${totalSoldStock} pcs\n`;
     text += `\n> Diperbarui pada ${moment().format('HH:mm:ss')} WIB\n`;
 

@@ -7,7 +7,7 @@ const settingsService = require('../services/settingsService');
  * Defaults to true if the setting is not yet present (backward compatible).
  *
  * @param {Object} ctx - Telegraf context
- * @param {'saldoEnabled'|'chatEnabled'} feature - Setting field name
+ * @param {'saldoEnabled'|'chatEnabled'|'ratingEnabled'} feature - Setting field name
  * @returns {Promise<boolean>}
  */
 async function isFeatureEnabled(ctx, feature) {

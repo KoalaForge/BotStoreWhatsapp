@@ -88,6 +88,11 @@ const settingSchema = new Schema({
         required: false,
         default: true
     },
+    ratingEnabled: {
+        type: Boolean,
+        required: false,
+        default: true
+    },
     whitelistEnabled: {
         type: Boolean,
         required: false,

@@ -48,6 +48,8 @@ const getAdminPanelContent = () => {
 
     text += '*CS & Fitur*\n';
     text += '`.addcs` `.removecs` `.listcs` `.togglesaldo` `.togglewelcome` `.togglerestokinfo`\n\n';
+    text += '*Rating Produk*\nPenilaian bintang dan ulasan pembeli setelah pesanan selesai.\n';
+    text += '`.togglerating` - Cek status rating\n`.caratogglerating` - Panduan mengatur rating\n\n';
 
     text += '*Group Settings*\n';
     text += '`.compactlist` `.autosuggest`\n\n';

@@ -46,13 +46,14 @@ function renderPintasanBlock(isGroup = false) {
     return renderSectionBlock('⚡ PINTASAN', lines);
 }
 
-function renderVariantCard({ productIndex, productName, variant, soldCount, lastRestockText }) {
+function renderVariantCard({ productIndex, productName, variant, soldCount, lastRestockText, ratingText = '' }) {
     const stockText = variant.stock > 0 ? String(variant.stock) : 'HABIS ❌';
     const body = [
         `💵 | Harga     : ${formatMoney(variant.price)}`,
         `📦 | Stok      : ${stockText}`,
         `🔥 | Terjual   : ${soldCount}`
     ];
+    if (ratingText) body.push(ratingText);
     if (lastRestockText) {
         body.push(`🔄 | Restok    : ${lastRestockText}`);
     }
@@ -95,6 +96,7 @@ function renderCompactList(productsWithVariants, { mentionPhone = null } = {}) {
         for (const v of variants) {
             if (!firstReadyCode) firstReadyCode = v.code;
             blockLines.push(`* ${v.name.toUpperCase()} │ ${formatMoney(v.price)}`);
+            if (v.ratingText) blockLines.push(`    └ ${v.ratingText}`);
             blockLines.push(`    └ -Kode: \`${v.code}\``);
         }
         readyBlocks.push(blockLines.join('\n'));
@@ -105,6 +107,7 @@ function renderCompactList(productsWithVariants, { mentionPhone = null } = {}) {
         const blockLines = [`📦 *#${idx} ${product.name.toUpperCase()}* _(stok habis)_`];
         for (const v of variants) {
             blockLines.push(`* ~${v.name.toUpperCase()}~ │ ❌ HABIS`);
+            if (v.ratingText) blockLines.push(`    └ ${v.ratingText}`);
             blockLines.push(`    └ -Kode: \`${v.code}\``);
         }
         habisBlocks.push(blockLines.join('\n'));

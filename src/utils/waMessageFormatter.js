@@ -5,6 +5,19 @@ const { parseOrderData } = require('./parser');
 const { htmlToWhatsApp } = require('./waFormatter');
 
 class MessageFormatter {
+    formatRatingSummary(summary) {
+        if (!summary || typeof summary !== 'object') return '';
+
+        const count = Number(summary.count ?? summary.reviewCount ?? summary.review_count);
+        if (!Number.isFinite(count) || count < 0) return '';
+        if (count === 0) return 'Rating: Belum ada ulasan';
+
+        const average = Number(summary.average ?? summary.averageRating ?? summary.average_rating ?? summary.rating);
+        if (!Number.isFinite(average)) return '';
+
+        return `Rating: ${average.toFixed(1)}/5 (${Math.trunc(count)} ulasan)`;
+    }
+
     /**
      * Format voucher lines for customer-facing messages
      * @private
@@ -475,7 +488,8 @@ class MessageFormatter {
         subtotal = null,
         isDiscountCapped = false,
         buyerNotes = null,
-        tierHint = null
+        tierHint = null,
+        ratingSummary = null
     }) {
         const formattedPrice = formatMoney(parseInt(price));
         const formattedTotal = formatMoney(parseInt(totalPrice));
@@ -483,6 +497,8 @@ class MessageFormatter {
         let message = `> *Rincian Pesanan*\n\n`;
         message += `*Produk:* ${productName}\n`;
         message += `*${variantLabel}:* ${variantName}\n`;
+        const ratingLine = this.formatRatingSummary(ratingSummary);
+        if (ratingLine) message += `${ratingLine}\n`;
         message += `*${priceLabel}:* ${formattedPrice}\n`;
         if (tierHint) {
             message += this._buildTierHintLines(tierHint);

@@ -1,4 +1,7 @@
+const { requireAdmin } = require('../../middleware/waAuth');
+
 const caraToggleFeature = async (ctx) => {
+    if (!await requireAdmin(ctx)) return;
     try {
         const text = `*Panduan Toggle Fitur*
 

@@ -79,7 +79,7 @@ const listVoucher = require('./privateCommand/listVoucher');
 // Private commands — Settings
 const setTopupPrefix = require('./privateCommand/setTopupPrefix');
 const setFee = require('./privateCommand/setFee');
-const { toggleSaldo, toggleWelcome } = require('./privateCommand/toggleFeature');
+const { toggleSaldo, toggleWelcome, toggleRating } = require('./privateCommand/toggleFeature');
 const toggleWhitelist = require('./privateCommand/toggleWhitelist');
 const { listWhitelist, approveWhitelist, rejectWhitelist } = require('./privateCommand/whitelistAdmin');
 const caraWhitelist = require('./helpCommand/caraWhitelist');
@@ -155,6 +155,7 @@ const caraSetFee = require('./helpCommand/caraSetFee');
 const caraVoucher = require('./helpCommand/caraVoucher');
 const caraCS = require('./helpCommand/caraCS');
 const caraToggleFeature = require('./helpCommand/caraToggleFeature');
+const caraToggleRating = require('./helpCommand/caraToggleRating');
 const caraToggleRestokInfo = require('./helpCommand/caraToggleRestokInfo');
 const caraRecapProduct = require('./helpCommand/caraRecapProduct');
 const delProductVariantSnk = delProductVariantSnk_cmd;
@@ -236,6 +237,7 @@ module.exports = {
     listCS,
     toggleSaldo,
     toggleWelcome,
+    toggleRating,
     toggleWhitelist,
     listWhitelist,
     approveWhitelist,
@@ -300,6 +302,7 @@ module.exports = {
     caraVoucher,
     caraCS,
     caraToggleFeature,
+    caraToggleRating,
     caraToggleRestokInfo,
     caraRecapProduct,
     caraCycle,

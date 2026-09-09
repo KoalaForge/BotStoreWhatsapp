@@ -10,6 +10,8 @@
  *   QUANTITY_INPUT     — entering quantity
  *   PAY_BALANCE_CONFIRM — confirming balance payment
  *   SALDO_TOPUP        — choosing top-up nominal
+ *   RATING_INPUT       — rating a completed transaction (parent: product list)
+ *   RATING_COMMENT     — adding an optional comment to a selected rating
  */
 
 const EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
@@ -29,7 +31,7 @@ setInterval(() => {
 /**
  * Get current screen state for a user.
  * @param {string} userId
- * @returns {{ screen: string, productCode?: string, variantCode?: string, variantItems?: Array, page?: number } | null}
+ * @returns {{ screen: string, productCode?: string, variantCode?: string, variantItems?: Array, page?: number, transactionId?: string, rating?: number } | null}
  */
 function getScreen(userId) {
     const state = _screens.get(userId);
@@ -76,7 +78,9 @@ function getParentScreen(currentScreen) {
         'ORDER_CONFIRM': 'VARIANT_SELECT',
         'QUANTITY_INPUT': 'ORDER_CONFIRM',
         'PAY_BALANCE_CONFIRM': 'ORDER_CONFIRM',
-        'SALDO_TOPUP': 'PRODUCT_LIST'
+        'SALDO_TOPUP': 'PRODUCT_LIST',
+        'RATING_INPUT': 'PRODUCT_LIST',
+        'RATING_COMMENT': 'PRODUCT_LIST'
     };
     return parents[currentScreen] || 'PRODUCT_LIST';
 }

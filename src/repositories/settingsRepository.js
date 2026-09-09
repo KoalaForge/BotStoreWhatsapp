@@ -117,6 +117,7 @@ class SettingsRepository {
                 productsPerPage: defaultSettings.productsPerPage,
                 productTransactionPrefix: defaultSettings.productTransactionPrefix,
                 topupTransactionPrefix: defaultSettings.topupTransactionPrefix,
+                ratingEnabled: defaultSettings.ratingEnabled !== false,
                 qrisTemplateEnabled: overlayEnabled
             }
             : { botId, qrisTemplateEnabled: overlayEnabled }; // No defaults available, seed from env
