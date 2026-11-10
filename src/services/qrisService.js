@@ -213,7 +213,15 @@ class QRISService {
         });
 
         const currentTime = moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
-        const expirationTime = new Date(Date.now() + 6 * 60 * 1000);
+        // Use the gateway's own expiry when it reports one (e.g. AutoGoPay's
+        // Interactive channel is 60 minutes, InstaQRIS/BCA/OVO 15) instead of
+        // always assuming 6 minutes — every gateway already returns `expired`
+        // (see BasePaymentGateway.createQRIS docblock), this just stops
+        // ignoring it here. For the existing 6-minute gateways this computes
+        // to the same displayed time as before.
+        const expirationTime = qrisResult.expired
+            ? moment.tz(qrisResult.expired, 'YYYYMMDDHHmmss', 'Asia/Jakarta').toDate()
+            : new Date(Date.now() + 6 * 60 * 1000);
         const formattedTime = new Date(expirationTime)
             .toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false })
             .slice(0, 5);
@@ -240,6 +248,7 @@ class QRISService {
             originalAmount: nominal,
             paymentMethodCode,
             gatewayReference: qrisResult.reference ?? qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null,
+            expiresAt: expirationTime,
             payment: qrisResult
         };
     }
@@ -271,7 +280,15 @@ class QRISService {
         });
 
         const currentTime = moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
-        const expirationTime = new Date(Date.now() + 6 * 60 * 1000);
+        // Use the gateway's own expiry when it reports one (e.g. AutoGoPay's
+        // Interactive channel is 60 minutes, InstaQRIS/BCA/OVO 15) instead of
+        // always assuming 6 minutes — every gateway already returns `expired`
+        // (see BasePaymentGateway.createQRIS docblock), this just stops
+        // ignoring it here. For the existing 6-minute gateways this computes
+        // to the same displayed time as before.
+        const expirationTime = qrisResult.expired
+            ? moment.tz(qrisResult.expired, 'YYYYMMDDHHmmss', 'Asia/Jakarta').toDate()
+            : new Date(Date.now() + 6 * 60 * 1000);
         const formattedTime = new Date(expirationTime)
             .toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false })
             .slice(0, 5);
@@ -298,6 +315,7 @@ class QRISService {
             originalAmount: nominal,
             paymentMethodCode,
             gatewayReference: qrisResult.reference ?? qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null,
+            expiresAt: expirationTime,
             payment: qrisResult
         };
     }
@@ -327,7 +345,15 @@ class QRISService {
             ctx
         });
 
-        const expirationTime = new Date(Date.now() + 6 * 60 * 1000);
+        // Use the gateway's own expiry when it reports one (e.g. AutoGoPay's
+        // Interactive channel is 60 minutes, InstaQRIS/BCA/OVO 15) instead of
+        // always assuming 6 minutes — every gateway already returns `expired`
+        // (see BasePaymentGateway.createQRIS docblock), this just stops
+        // ignoring it here. For the existing 6-minute gateways this computes
+        // to the same displayed time as before.
+        const expirationTime = qrisResult.expired
+            ? moment.tz(qrisResult.expired, 'YYYYMMDDHHmmss', 'Asia/Jakarta').toDate()
+            : new Date(Date.now() + 6 * 60 * 1000);
         const formattedTime = new Date(expirationTime)
             .toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false })
             .slice(0, 5);
@@ -357,6 +383,7 @@ class QRISService {
             finalAmount: paymentGateway.usesBaseAmount ? totalAmount : customerPays,
             paymentMethodCode,
             gatewayReference: qrisResult.reference ?? qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null,
+            expiresAt: expirationTime,
             payment: qrisResult
         };
     }
@@ -491,6 +518,14 @@ class QRISService {
     }
 
     _formatPaymentInstruction(payment, formattedTime) {
+        // Channels with no QR at all (e.g. AutoGoPay OVO) hand back a
+        // pre-built transfer instruction string instead of qrString/qrUrl —
+        // the generic "scan the QRIS above" notice below is actively wrong
+        // there since there is no QRIS above.
+        if (payment?.paymentInstructions) {
+            return `${payment.paymentInstructions}\n\n_Selesaikan pembayaran sebelum ${formattedTime} WIB._\n\n`;
+        }
+
         if (!payment || String(payment.channel || '').toLowerCase() === 'qris') {
             return `_Selesaikan pembayaran sebelum ${formattedTime} WIB dengan scan QRIS di atas._\n\n`;
         }

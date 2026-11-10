@@ -181,24 +181,48 @@ async function detectPaymentAndDeliver(sock, context, transaction, statusData) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve a transaction's expiry and reminder instants.
+ *
+ * Rows written after expires_at was introduced carry their own window
+ * (6 min for QRIS, 15-60 min for AutoGoPay channels). Rows from before
+ * that — or any row where it's still null for another reason — fall back
+ * to the original hardcoded 6-minute computation from formattedDate, so
+ * behaviour for those is unchanged.
+ *
+ * Reminder fires exactly 1 minute before expiry. For the legacy 6-minute
+ * case that lands at the 5-minute mark — the same threshold the old
+ * `diffMinutes >= 5` check used — so this is not a behaviour change for
+ * existing QRIS transactions, only a generalization for new ones.
+ *
+ * @param {Object} transaction
+ * @returns {{expiresAt: moment.Moment, reminderAt: moment.Moment}}
+ */
+function _resolveExpiry(transaction) {
+    const givenTime = moment(transaction.formattedDate, "YYYY-MM-DD HH:mm:ss");
+    const expiresAt = transaction.expires_at
+        ? moment(transaction.expires_at)
+        : givenTime.clone().add(6, 'minutes');
+    const reminderAt = expiresAt.clone().subtract(1, 'minutes');
+
+    return { expiresAt, reminderAt };
+}
+
+/**
  * Process a single pollable transaction: check expiry, send reminders,
  * detect payment, and deliver.
  */
 async function processOneTransaction(sock, transaction, statusData) {
     const context = await repositoryContext.createContext(transaction.botId, transaction.ownerId);
 
-    const givenTimeString = transaction.formattedDate;
-    const givenTime = moment(givenTimeString, "YYYY-MM-DD HH:mm:ss");
-
     const currentTime = moment();
-    const diffMinutes = currentTime.diff(givenTime, 'minutes');
+    const { expiresAt, reminderAt } = _resolveExpiry(transaction);
 
-    if (diffMinutes >= 6) {
-        await handleExpiredTransaction(sock, context, transaction, givenTimeString);
+    if (currentTime.isSameOrAfter(expiresAt)) {
+        await handleExpiredTransaction(sock, context, transaction, transaction.formattedDate);
         return;
     }
 
-    if (diffMinutes >= 5 && transaction.isReminded === false) {
+    if (currentTime.isSameOrAfter(reminderAt) && transaction.isReminded === false) {
         await handleTransactionReminder(sock, context, transaction);
     }
 
@@ -208,23 +232,20 @@ async function processOneTransaction(sock, transaction, statusData) {
 /**
  * Handle expiry and reminders for webhook_only transactions.
  * These transactions are NOT polled for payment status (no HTTP call to gateway),
- * but they still need to expire after 6 minutes and get reminders at 5 minutes.
+ * but they still need to expire and get a reminder — see _resolveExpiry().
  */
 async function processExpiryAndReminders(sock, transaction) {
     const context = await repositoryContext.createContext(transaction.botId, transaction.ownerId);
 
-    const givenTimeString = transaction.formattedDate;
-    const givenTime = moment(givenTimeString, "YYYY-MM-DD HH:mm:ss");
-
     const currentTime = moment();
-    const diffMinutes = currentTime.diff(givenTime, 'minutes');
+    const { expiresAt, reminderAt } = _resolveExpiry(transaction);
 
-    if (diffMinutes >= 6) {
-        await handleExpiredTransaction(sock, context, transaction, givenTimeString);
+    if (currentTime.isSameOrAfter(expiresAt)) {
+        await handleExpiredTransaction(sock, context, transaction, transaction.formattedDate);
         return;
     }
 
-    if (diffMinutes >= 5 && transaction.isReminded === false) {
+    if (currentTime.isSameOrAfter(reminderAt) && transaction.isReminded === false) {
         await handleTransactionReminder(sock, context, transaction);
     }
 }

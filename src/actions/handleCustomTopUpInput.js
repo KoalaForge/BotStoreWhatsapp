@@ -32,7 +32,7 @@ async function handleCustomTopUpInput(ctx) {
         }
 
         // Generate QRIS for top-up (includes gateway fee calculation)
-        const { qrisImage, transactionId, messageText, formattedDate, formattedDateFile, fee, totalAmount, originalAmount, paymentMethodCode, gatewayReference } =
+        const { qrisImage, transactionId, messageText, formattedDate, formattedDateFile, fee, totalAmount, originalAmount, paymentMethodCode, gatewayReference, expiresAt } =
             await qrisService.generateTopUpQRIS({ ctx, nominal });
 
         // Resolve QRIS image to Buffer for WhatsApp
@@ -72,6 +72,7 @@ async function handleCustomTopUpInput(ctx) {
             isDelivered: false,
             topupAmount: originalAmount,
             gateway_reference: gatewayReference,
+            expires_at: expiresAt,
         });
 
     } catch (error) {

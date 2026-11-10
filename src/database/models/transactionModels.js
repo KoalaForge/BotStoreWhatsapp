@@ -220,6 +220,15 @@ const transactionSchema = new Schema({
         type: String,
         required: false,
         default: null,
+    },
+    // Per-transaction payment window, set at creation (formattedDate + method's
+    // expiry minutes). null on rows created before this field existed — the
+    // polling loop falls back to the legacy hardcoded 6-minute computation
+    // for those, so old and new rows both expire correctly during rollout.
+    expires_at: {
+        type: Date,
+        required: false,
+        default: null
     }
 }, {
     timestamps: true

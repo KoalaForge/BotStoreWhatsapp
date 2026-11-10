@@ -25,7 +25,7 @@ async function handleTopUpNominal(ctx) {
         await ctx.reply("⏳ Membuat pembayaran...");
 
         // Generate QRIS for top-up (includes gateway fee calculation)
-        const { qrisImage, transactionId, messageText, formattedDate, formattedDateFile, fee, totalAmount, originalAmount, paymentMethodCode, gatewayReference } =
+        const { qrisImage, transactionId, messageText, formattedDate, formattedDateFile, fee, totalAmount, originalAmount, paymentMethodCode, gatewayReference, expiresAt } =
             await qrisService.generateTopUpQRIS({ ctx, nominal });
 
         // Resolve QRIS image to Buffer for WhatsApp
@@ -66,6 +66,7 @@ async function handleTopUpNominal(ctx) {
             isDelivered: false,
             topupAmount: originalAmount,
             gateway_reference: gatewayReference,
+            expires_at: expiresAt,
             originGroupJid: ctx.originGroupJid || null,
             originSenderJid: ctx.originGroupJid ? ctx.jid : null,
             originMessageId: ctx.originGroupJid ? (ctx.rawMessage?.key?.id || null) : null,

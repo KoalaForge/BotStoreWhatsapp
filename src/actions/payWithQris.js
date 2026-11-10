@@ -118,7 +118,7 @@ async function payWithQris(ctx) {
         await ctx.reply("⏳ Membuat pembayaran...");
 
         // Generate QRIS for product purchase (includes gateway fee calculation)
-        const { qrisImage, transactionId, messageText: qrisMessage, formattedDate, formattedDateFile, gatewayFee, finalAmount, paymentMethodCode, gatewayReference } =
+        const { qrisImage, transactionId, messageText: qrisMessage, formattedDate, formattedDateFile, gatewayFee, finalAmount, paymentMethodCode, gatewayReference, expiresAt } =
             await qrisService.generateProductQRIS({
                 ctx,
                 totalAmount,
@@ -175,6 +175,7 @@ async function payWithQris(ctx) {
             voucherCode: voucherCode,
             voucherDiscount: voucherDiscount,
             gateway_reference: gatewayReference,
+            expires_at: expiresAt,
             is_reseller_order: isResellerOrder,
             buyer_notes: buyerNotes || null,
             originGroupJid: ctx.originGroupJid || null,

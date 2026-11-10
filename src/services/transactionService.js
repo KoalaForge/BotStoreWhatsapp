@@ -1,3 +1,4 @@
+const moment = require('moment-timezone');
 const transactionRepository = require('../repositories/TransactionRepository');
 const botUserBalanceRepository = require('../repositories/BotUserBalanceRepository');
 const TransactionModel = require('../database/models/transactionModels');
@@ -29,13 +30,26 @@ class TransactionService {
     }
 
     /**
-     * Create a new transaction record
+     * Create a new transaction record.
+     * Sets expires_at from formattedDate + 6 minutes when the caller doesn't
+     * supply one, so every new row is self-describing regardless of payment
+     * method. Callers with a longer payment window (e.g. AutoGoPay) pass
+     * expires_at explicitly and it is used as-is.
      * @param {Object} context - Repository context (botId, ownerId, mode)
      * @param {Object} transactionData - Transaction details
      * @returns {Promise<Object>} - Created transaction
      */
     async createTransaction(context, transactionData) {
-        return await transactionRepository.create(context, transactionData);
+        const data = { ...transactionData };
+
+        if (!data.expires_at) {
+            const baseTime = data.formattedDate
+                ? moment.tz(data.formattedDate, 'YYYY-MM-DD HH:mm:ss', 'Asia/Jakarta')
+                : moment().tz('Asia/Jakarta');
+            data.expires_at = baseTime.add(6, 'minutes').toDate();
+        }
+
+        return await transactionRepository.create(context, data);
     }
 
     /**
