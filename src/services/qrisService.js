@@ -535,7 +535,7 @@ class QRISService {
         if (payment.paymentUrl) lines.push(`*Link Pembayaran:* ${payment.paymentUrl}`);
         if (payment.retailCode) lines.push(`*Kode Pembayaran:* \`${payment.retailCode}\``);
         if (payment.qrContent) lines.push(`*Kode QR:* \`${payment.qrContent}\``);
-        lines.push(`_Selesaikan pembayaran sebelum ${payment.expiresAt || `${formattedTime} WIB`}._`, '');
+        lines.push(`_Selesaikan pembayaran sebelum ${formattedTime} WIB._`, '');
         return `${lines.join('\n')}\n`;
     }
 }

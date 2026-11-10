@@ -146,6 +146,22 @@ class BelibayarGateway extends BasePaymentGateway {
     return response?.data?.data || response?.data || response;
   }
 
+  /**
+   * Belibayar's expired_at comes back as a unix epoch, not the
+   * "YYYYMMDDHHmmss" string every other gateway's `expired` field uses
+   * (BasePaymentGateway's createQRIS() contract) — qrisService/payWithQris
+   * parse `expired` against that exact format, so an unconverted epoch
+   * silently produces an Invalid Date and crashes the Mongoose write on
+   * expires_at.
+   */
+  _normalizeExpiredAt(expiredAtRaw) {
+    if (expiredAtRaw == null) return moment().tz('Asia/Jakarta').add(6, 'minutes').format('YYYYMMDDHHmmss');
+    const parsed = /^\d+$/.test(String(expiredAtRaw))
+      ? moment.unix(Number(expiredAtRaw))
+      : moment(expiredAtRaw);
+    return (parsed.isValid() ? parsed : moment().add(6, 'minutes')).tz('Asia/Jakarta').format('YYYYMMDDHHmmss');
+  }
+
   async _normalizePayment(response, methodCode, expiry = null) {
     const data = this._responseData(response);
     const channel = this._channelForMethod(methodCode).channel;
@@ -154,7 +170,7 @@ class BelibayarGateway extends BasePaymentGateway {
     const paymentUrl = data?.payment_link_url || data?.payment_url || data?.payment_link || data?.checkout_url || data?.url || null;
     const virtualAccount = data?.virtual_account || data?.va_number || data?.account_number || null;
     const retailCode = data?.retail_code || data?.payment_code || data?.bill_code || null;
-    const expiresAt = data?.expires_at || data?.expiry || data?.expired_at || expiry;
+    const expiresAtRaw = data?.expires_at || data?.expiry || data?.expired_at || expiry;
 
     return {
       reference: data?.reference || data?.payment_reference || data?.transaction_reference || null,
@@ -171,7 +187,7 @@ class BelibayarGateway extends BasePaymentGateway {
       retailCode,
       fee: data?.merchant_fee ?? data?.fee ?? null,
       merchantReceives: data?.net_credit ?? data?.amount_received ?? null,
-      expiresAt,
+      expired: this._normalizeExpiredAt(expiresAtRaw),
       raw: response,
     };
   }

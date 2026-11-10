@@ -84,6 +84,22 @@ describe('BelibayarGateway', () => {
     expect(result.qrContent).toBeNull();
   });
 
+  it('normalizes a raw unix-epoch expired_at into the YYYYMMDDHHmmss token every gateway contract expects', async () => {
+    // Regression: Belibayar returns expired_at as a unix epoch (e.g. 1794401950),
+    // unlike every other gateway's `expired` field, and this gateway used to
+    // return it under a differently-named `expiresAt` key besides. Left
+    // unconverted, qrisService/payWithQris parse `expired` against
+    // "YYYYMMDDHHmmss" and get an Invalid Date, which crashes the Mongoose
+    // write on expires_at.
+    mockPost.mockResolvedValue({ data: { data: { qr_content: 'QR', expired_at: 1794401950 } } });
+    const gateway = new BelibayarGateway();
+
+    const result = await gateway.createQRIS({ amount: 10000, referenceId: 'bb-epoch', paymentMethodCode: 'belibayar-qris' });
+
+    expect(result.expired).toMatch(/^\d{14}$/);
+    expect(result.expired).not.toBe('1794401950');
+  });
+
   it.each([
     ['belibayar-qris', { pay_method: { method: 'qris' } }],
     ['belibayar-va-bca', { pay_method: { method: 'virtual_account', channel: 'BCA' } }],
