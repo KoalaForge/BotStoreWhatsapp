@@ -99,7 +99,7 @@ class GatewayResolverService {
         }
 
         // Step 3: Look up fee config from payment_methods
-        const { feeConfig, paymentMethodCode } = await this._resolveFeeConfig(gatewayType, userGateway.use_own_credentials);
+        const { feeConfig, paymentMethodCode } = await this._resolveFeeConfig(gatewayType, userGateway.use_own_credentials, credentials);
 
         // Step 4: Create gateway with credentials
         let gateway;
@@ -140,10 +140,11 @@ class GatewayResolverService {
      * Resolve fee config and payment method code from payment_gateways + payment_methods
      * @param {string} gatewayType - e.g. 'linkqu'
      * @param {boolean} useOwnCredentials - whether user uses own credentials
+     * @param {Object|null} [credentials=null] - Resolved credentials (own or platform), for gateways whose channel is configured per-tenant
      * @returns {Promise<{feeConfig: Object|null, paymentMethodCode: string}>}
      * @private
      */
-    async _resolveFeeConfig(gatewayType, useOwnCredentials) {
+    async _resolveFeeConfig(gatewayType, useOwnCredentials, credentials = null) {
         const platformGateway = await PaymentGateway.findOne({
             gateway_type: gatewayType,
             is_active: true
@@ -157,8 +158,25 @@ class GatewayResolverService {
             payment_gateway_slug: platformGateway.slug,
             is_active: true
         };
-        if (gatewayType !== 'belibayar') methodFilter.method_type = 'qris';
-        if (gatewayType === 'belibayar') methodFilter.code = process.env.BELIBAYAR_METHOD || 'belibayar-qris';
+        if (gatewayType === 'belibayar') {
+            methodFilter.code = process.env.BELIBAYAR_METHOD || 'belibayar-qris';
+        } else if (gatewayType === 'autogopay') {
+            // AutoGoPay is one gateway behind six channels (payment_methods.code
+            // like 'autogopay-gopay'/'autogopay-ovo') — unlike every other
+            // gateway here, which has exactly one seeded QRIS method, so a bare
+            // method_type:'qris' filter can't disambiguate between them, and
+            // OVO's method_type is 'eWallet' anyway (it would never match
+            // 'qris'). credentials.method is the full payment_methods.code,
+            // set by koalabotbe's SaveUserPaymentGatewayAction / the
+            // AUTOGOPAY_METHOD env var for platform credentials.
+            const configuredMethod = credentials?.method || process.env.AUTOGOPAY_METHOD || null;
+            if (!configuredMethod) {
+                return { feeConfig: null, paymentMethodCode: 'qris' };
+            }
+            methodFilter.code = configuredMethod;
+        } else {
+            methodFilter.method_type = 'qris';
+        }
 
         let paymentMethod = await PaymentMethod.findOne(methodFilter).lean();
         if (!paymentMethod && gatewayType === 'belibayar') {
