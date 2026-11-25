@@ -381,6 +381,8 @@ class QRISService {
             formattedDateFile: moment().tz('Asia/Jakarta').format('YYYY-MM-DD_HH-mm-ss'),
             gatewayFee,
             finalAmount: paymentGateway.usesBaseAmount ? totalAmount : customerPays,
+            // Who really paid the fee: the buyer only does when the QR amount carries it
+            feePaidBy: qrisAmount === totalAmount ? 'merchant' : 'customer',
             paymentMethodCode,
             gatewayReference: qrisResult.reference ?? qrisResult.raw?.data?.reference ?? qrisResult.raw?.data?.qris_id ?? null,
             expiresAt: expirationTime,

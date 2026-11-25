@@ -4,6 +4,7 @@ const stockRepository = require('../repositories/StockRepository');
 const resellerVariantConfigRepository = require('../repositories/ResellerVariantConfigRepository');
 const voucherState = require('../state/voucherState');
 const resellerService = require('./resellerService');
+const { recalculateOrderProfit } = require('./orderProfitService');
 
 class OrderService {
     /**
@@ -159,21 +160,24 @@ class OrderService {
     }
 
     /**
-     * Calculate transaction profit based on order type
+     * Calculate transaction profit based on order type.
+     * Reseller orders keep their markup (what settlement pays); stock orders
+     * follow the backend formula and may be negative.
      *
      * @param {Object} params
      * @param {boolean} params.isReseller - Whether this is a reseller order
      * @param {number} params.markupPerUnit - Markup per unit (reseller only)
      * @param {number} params.quantity - Order quantity
-     * @param {number} params.stockProfit - Profit from stock (normal only)
      * @param {number} params.voucherDiscount - Voucher discount amount
+     * @param {Object} params.order - { voucherDiscount, payment_fee, fee_paid_by } as stored on the transaction
+     * @param {Array} params.items - [{ unit_price, data: stock snapshots }]
      * @returns {number} - Calculated profit
      */
-    calculateTransactionProfit({ isReseller, markupPerUnit, quantity, stockProfit, voucherDiscount }) {
+    calculateTransactionProfit({ isReseller, markupPerUnit, quantity, voucherDiscount, order, items }) {
         if (isReseller) {
             return Math.max(0, (markupPerUnit * quantity) - voucherDiscount);
         }
-        return Math.max(0, parseInt(stockProfit) - voucherDiscount);
+        return recalculateOrderProfit({ profit: 0, orderChannel: 'whatsapp', ...order, is_reseller_order: false, voucherDiscount }, items);
     }
 
     /**

@@ -296,8 +296,15 @@ const pullStock = async (ctx) => {
             productName: getProduct.name,
             variantName: getVariantProduct.name
         }, reservation);
-        const { dataStock, profit, stockItems } = stockResult;
+        const { dataStock, stockItems } = stockResult;
         claimedStockItems = stockItems;
+
+        const profit = orderService.calculateTransactionProfit({
+            isReseller: false,
+            voucherDiscount: 0,
+            order: { payment_fee: 0 },
+            items: [{ unit_price: price, data: stockItems }]
+        });
 
         const formattedDate = moment().tz('Asia/Jakarta').format('YYYY-MM-DD HH:mm:ss');
 
@@ -314,7 +321,7 @@ const pullStock = async (ctx) => {
             messageId: null,
             isSuccess: true,
             isDelivered: true,
-            profit: parseInt(profit),
+            profit,
             transaction_type: 'product',
             payment_method_code: 'manual',
             orderChannel: 'whatsapp'
