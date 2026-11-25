@@ -5,6 +5,8 @@ const stockBatchSchema = new mongoose.Schema({
     batchCode: { type: String, required: true, unique: true },
     codeVariant: { type: String, required: true },
     ownerId: { type: String, default: null },
+    priceSnapshot: { type: Number, default: null },
+    unitCostPerUnit: { type: Number, default: null },
     profitPerUnit: { type: Number, default: 0 },
     quantityAdded: { type: Number, required: true },
     sourceSystem: { type: String, required: true },

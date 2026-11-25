@@ -87,6 +87,7 @@ async function manualCycleTransaction(ctx, transactionId) {
                     const ownerId = record.ownerId ?? variant?.ownerId ?? null;
                     const lineage = {
                         unitCost: record.unitCost ?? null,
+                        unitCostSource: record.unitCostSource,
                         stockBatchId: record.stockBatchId ?? null,
                         stockOriginId: record.stockOriginId ?? null
                     };
@@ -214,6 +215,7 @@ async function bulkCycleEligible(ctx) {
                     const ownerId = record.ownerId ?? variant?.ownerId ?? null;
                     const lineage = {
                         unitCost: record.unitCost ?? null,
+                        unitCostSource: record.unitCostSource,
                         stockBatchId: record.stockBatchId ?? null,
                         stockOriginId: record.stockOriginId ?? null
                     };

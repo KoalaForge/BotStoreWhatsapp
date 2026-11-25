@@ -44,9 +44,6 @@ const delStockModule = require('./privateCommand/delStock');
 const delStock = delStockModule;
 const { handleDelStockDataInput } = delStockModule;
 const pullStock = require('./privateCommand/pullStock');
-const setProfitStockModule = require('./privateCommand/setProfitStock');
-const setProfitStock = setProfitStockModule;
-const { handleProfitStockDataInput } = setProfitStockModule;
 
 // Private commands — Admin Management
 const addAdmin = require('./privateCommand/addAdmin');
@@ -136,7 +133,6 @@ const caraAddVariant = require('./helpCommand/caraAddVariant');
 const caraSetSnkVariant = require('./helpCommand/caraSetSnkVariant');
 const caraDelVariantSnk = require('./helpCommand/caraDelVariantSnk');
 const caraPullStock = require('./helpCommand/caraPullStock');
-const caraSetProfitStock = require('./helpCommand/caraSetProfitStock');
 const caraAddAdmin = require('./helpCommand/caraAddAdmin');
 const caraDeleteAdmin = require('./helpCommand/caraDeleteAdmin');
 const caraActivateProduct = require('./helpCommand/caraActivateProduct');
@@ -223,7 +219,6 @@ module.exports = {
     setProductPrefix,
     setTopupPrefix,
     setFee,
-    setProfitStock,
     addVoucher,
     deleteVoucher,
     activateVoucher,
@@ -283,7 +278,6 @@ module.exports = {
     delProductVariantSnk,
     caraDelVariantSnk,
     caraPullStock,
-    caraSetProfitStock,
     caraAddAdmin,
     caraDeleteAdmin,
     caraActivateProduct,
@@ -315,5 +309,4 @@ module.exports = {
     handleSnkInput,
     handleStockDataInput,
     handleDelStockDataInput,
-    handleProfitStockDataInput,
 };

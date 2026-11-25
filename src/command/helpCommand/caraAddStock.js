@@ -6,7 +6,16 @@ const caraAddStock = async (ctx) => {
 
         const text = `*Cara Add Stock*
 
-Kalian tinggal kirim data stock nya dengan command dan reply data stock nya.
+1. Kirim \`.addstock <code_variant> <modal>\` (atau \`.addstok\`)
+2. Setelah bot membalas, kirim data stock nya (satu per baris)
+
+*Contoh:* \`.addstock net1b 5000\`
+
+*Modal* adalah harga beli per unit, *bukan profit*.
+• Wajib diisi, angka bulat minimal 0, tanpa titik atau "k"
+• Isi 0 untuk stok gratis atau bonus
+• Profit dihitung otomatis: harga jual - modal
+• Bot membalas "Modal Rp X → profit Rp Y/unit", atau "rugi Rp X/unit" bila modal melebihi harga jual. Cek angkanya sebelum mengirim data stock.
 
 Jika ingin membuat stok menjadi
 

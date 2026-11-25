@@ -67,7 +67,6 @@ function registerCommands(router) {
     router.command(['addstock', 'addstok'], command.addStock);
     safeCommand(router, ['delstock', 'delstocks'], command.delStock);
     safeCommand(router, ['pullstock', 'pullstok'], command.pullStock);
-    safeCommand(router, ['setprofitstock', 'setprofitstok'], command.setProfitStock);
 
     // ============================================
     // ADMIN MANAGEMENT COMMANDS
@@ -189,7 +188,6 @@ function registerCommands(router) {
     router.command(['caraaddstock', 'caraaddstok'], command.caraAddStock);
     router.command(['caradelstock', 'caradelstok'], command.caraDelStock);
     router.command(['carapullstock', 'carapullstok'], command.caraPullStock);
-    router.command(['carasetprofitstock', 'carasetprofitstok'], command.caraSetProfitStock);
     router.command('caraaddadmin', command.caraAddAdmin);
     router.command(['caradeleteadmin', 'carahapusadmin'], command.caraDeleteAdmin);
     router.command(['carabanneduser', 'carabanned'], command.caraBannedUser);

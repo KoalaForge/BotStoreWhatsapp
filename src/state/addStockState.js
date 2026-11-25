@@ -3,7 +3,7 @@
  * In-memory state for 2-step stock input flow in WhatsApp.
  *
  * Flow:
- * 1. Admin sends `.addstock CODE-VARIANT [profit]`
+ * 1. Admin sends `.addstock CODE-VARIANT <modal>`
  * 2. Bot replies "Kirim data stock (satu per baris):"
  * 3. Admin sends multi-line stock data
  * 4. Bot processes and confirms
@@ -11,7 +11,7 @@
  * State Structure: {
  *   userId: {
  *     codeVariant,
- *     profit,
+ *     unitCost,
  *     timestamp,
  *     awaitingStockData   // true = waiting for stock lines
  *   }
@@ -49,10 +49,10 @@ function isAwaitingStockData(userId) {
     return !!(state && state.awaitingStockData);
 }
 
-function startStockInput(userId, codeVariant, profit) {
+function startStockInput(userId, codeVariant, unitCost) {
     stockInputState.set(userId, {
         codeVariant,
-        profit: profit || 0,
+        unitCost,
         awaitingStockData: true,
         timestamp: Date.now(),
     });

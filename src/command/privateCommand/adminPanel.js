@@ -24,7 +24,7 @@ const getAdminPanelContent = () => {
     text += '`.addtierpricing` `.deltierpricing` `.listtierpricing` `.cleartierpricing`\n\n';
 
     text += '*Stok*\n';
-    text += '`.addstock` `.delstock` `.pullstock` `.setprofitstock`\n\n';
+    text += '`.addstock` `.delstock` `.pullstock`\n\n';
 
     text += '*Admin & User*\n';
     text += '`.addadmin` `.deleteadmin` `.listadmin` `.banned` `.unbanned`\n\n';

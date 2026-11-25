@@ -3,6 +3,7 @@ const StockModel = require('../database/models/stockModels');
 const StockBatchModel = require('../database/models/stockBatchModels');
 const IsolationStrategy = require('./IsolationStrategy');
 const { randomUUID } = require('crypto');
+const { UnitCostSource, resolveUnitCostSource } = require('../enums/UnitCostSource');
 
 const DEFAULT_RESERVATION_TTL_MS = 15 * 60 * 1000;
 const MALFORMED_RESERVATION_GRACE_MS = 15 * 60 * 1000;
@@ -24,6 +25,13 @@ class StockRepository extends BaseRepository {
         super(StockModel, IsolationStrategy.OwnerScoped, {
             caseInsensitiveFields: ['codeVariant']
         });
+    }
+
+    _unitCostFields({ unitCost = null, unitCostSource } = {}) {
+        const cost = unitCost ?? null;
+        const source = resolveUnitCostSource(cost, unitCostSource);
+
+        return source ? { unitCost: cost, unitCostSource: source } : { unitCost: cost };
     }
 
     _availabilityFilter() {
@@ -94,14 +102,16 @@ class StockRepository extends BaseRepository {
         return await this._releaseReservations(scopedFilter);
     }
 
-    async createStockBatch(context, codeVariant, profitPerUnit, quantityAdded) {
+    async createStockBatch(context, codeVariant, { priceSnapshot, unitCostPerUnit, quantityAdded }) {
         const resolvedContext = await this._ensureContext(context);
         const batchCode = `WA-${randomUUID()}`;
         const data = this._buildData(resolvedContext, {
             _id: batchCode,
             batchCode,
             codeVariant: this._normalizeValue(codeVariant),
-            profitPerUnit,
+            priceSnapshot,
+            unitCostPerUnit,
+            profitPerUnit: priceSnapshot - unitCostPerUnit,
             quantityAdded,
             sourceSystem: 'orkut-whatsapp',
             status: 'completed'
@@ -109,6 +119,26 @@ class StockRepository extends BaseRepository {
 
         await StockBatchModel.create(data);
         return batchCode;
+    }
+
+    /**
+     * Keep the stored profit estimate of available stock in step with the
+     * selling price. Stock with an unknown or unmarked cost keeps its old
+     * profit: the legacy backfill invented some unmarked costs, and a new
+     * profit would make them look real.
+     */
+    async recalculateAvailableProfit(context, codeVariant, price) {
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, {
+            codeVariant,
+            unitCost: { $type: 'number' },
+            unitCostSource: { $in: [UnitCostSource.INPUT, UnitCostSource.ESTIMATED] }
+        });
+
+        return await this.model.updateMany(
+            this._withAvailabilityFilter(ownerFilter),
+            [{ $set: { profit: { $subtract: [price, '$unitCost'] } } }]
+        );
     }
 
     async claimStock(context, codeVariant, reservation) {
@@ -218,7 +248,7 @@ class StockRepository extends BaseRepository {
         const doc = { codeVariant, dataStock, profit };
         if (expires_at) doc.expires_at = expires_at;
         Object.assign(doc, {
-            unitCost: lineage.unitCost ?? null,
+            ...this._unitCostFields(lineage),
             stockBatchId: lineage.stockBatchId ?? null,
             stockOriginId: lineage.stockOriginId ?? randomUUID(),
             stockSchemaVersion: 2,
@@ -511,7 +541,7 @@ class StockRepository extends BaseRepository {
             dataStock,
             profit,
             ownerId: null,
-            unitCost: lineage.unitCost ?? null,
+            ...this._unitCostFields(lineage),
             stockBatchId: lineage.stockBatchId ?? null,
             stockOriginId: lineage.stockOriginId ?? randomUUID(),
             stockSchemaVersion: 2,

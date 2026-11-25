@@ -4,11 +4,23 @@ const productVariantRepository = require('../../repositories/ProductVariantRepos
 const stockRepository = require('../../repositories/StockRepository');
 const { requireAdmin } = require('../../middleware/waAuth');
 const addStockState = require('../../state/addStockState');
+const { UnitCostSource } = require('../../enums/UnitCostSource');
+const { parseUnitCost, formatUnitCostSummary } = require('../../utils/unitCost');
+
+const USAGE =
+    '*Tambah Stock*\n\n' +
+    'Format:\n' +
+    '`.addstock <codeVariant> <modal>`\n\n' +
+    'Contoh:\n' +
+    '`.addstock CANVA-1B 5000`\n\n' +
+    '_Modal = harga beli per unit, wajib diisi. Tulis angka bulat minimal 0, tanpa titik atau "k". Isi 0 untuk stok gratis._\n' +
+    '_Profit dihitung otomatis: harga jual - modal._\n' +
+    '_Data stock dikirim di pesan berikutnya._';
 
 /**
  * Add stock - 2-step flow for WhatsApp
  *
- * Step 1: .addstock <codeVariant> [profit]
+ * Step 1: .addstock <codeVariant> <modal>
  *         Bot asks for stock data
  * Step 2: User sends multi-line text
  *         Bot processes each line as a stock item
@@ -20,24 +32,16 @@ const addStock = async (ctx) => {
     try {
         if (!await requireAdmin(ctx)) return;
 
+        // A new command replaces any pending one, so a rejected command can
+        // never leave the next message going to the previous variant and cost.
+        addStockState.clearState(ctx.from);
+
         const args = ctx.commandArgs || [];
-        const codeVariant = args[0];
-        const profitPerItem = args[1] ? parseInt(args[1]) : 0;
+        const [codeVariant, unitCostInput] = args;
+        const unitCost = parseUnitCost(unitCostInput);
 
-        if (!codeVariant) {
-            return ctx.reply(
-                '*Tambah Stock*\n\n' +
-                'Format:\n' +
-                '`.addstock <codeVariant> [profit]`\n\n' +
-                'Contoh:\n' +
-                '`.addstock CANVA-1B`\n' +
-                '`.addstock CANVA-1B 5000`\n\n' +
-                '_Profit per item bersifat opsional (default 0)_'
-            );
-        }
-
-        if (args[1] && isNaN(profitPerItem)) {
-            return ctx.reply('*Profit harus berupa angka!*');
+        if (args.length !== 2 || unitCost === null) {
+            return ctx.reply(USAGE);
         }
 
         const checkCode = await productVariantRepository.findByCodeVariant(ctx, codeVariant);
@@ -46,14 +50,11 @@ const addStock = async (ctx) => {
         }
 
         // Start awaiting stock data input
-        addStockState.startStockInput(ctx.from, codeVariant, profitPerItem);
-
-        const profitNote = profitPerItem > 0
-            ? `\n_Profit per item: Rp ${profitPerItem.toLocaleString('id-ID')}_`
-            : '';
+        addStockState.startStockInput(ctx.from, codeVariant, unitCost);
 
         await ctx.reply(
-            `*Kirim data stock untuk \`${codeVariant}\`*${profitNote}\n\n` +
+            `*Kirim data stock untuk \`${codeVariant}\`*\n` +
+            `${formatUnitCostSummary(checkCode.price, unitCost)}\n\n` +
             'Kirim data stock sekarang (satu per baris):\n\n' +
             '_Contoh:_\n' +
             '```\nemail1@gmail.com|password1\nemail2@gmail.com|password2\nemail3@gmail.com|password3\n```\n\n' +
@@ -93,30 +94,43 @@ const handleStockDataInput = async (ctx) => {
             return ctx.reply('*Sesi habis, silakan mulai dari awal dengan `.addstock`*');
         }
 
-        const { codeVariant, profit } = state;
+        const { codeVariant, unitCost } = state;
         const lines = text.split('\n').map(l => l.trim()).filter(l => l);
 
         if (lines.length === 0) {
             // Re-start state so user can try again
-            addStockState.startStockInput(userId, codeVariant, profit);
+            addStockState.startStockInput(userId, codeVariant, unitCost);
             return ctx.reply('*Data stock kosong.* Kirim ulang data stock (satu per baris):');
         }
 
-        const batchCode = await stockRepository.createStockBatch(ctx, codeVariant, profit, lines.length);
-        let count = 0;
-        for (const line of lines) {
-            await stockRepository.addStock(ctx, codeVariant, line, profit, null, { stockBatchId: batchCode });
-            count++;
+        // Read again: the price may have changed since step 1
+        const variant = await productVariantRepository.findByCodeVariant(ctx, codeVariant);
+        if (!variant) {
+            await ctx.reply('*Code variant produk tidak ditemukan.*');
+            return true;
         }
 
-        const profitInfo = profit > 0
-            ? `\n*Profit per item:* Rp ${profit.toLocaleString('id-ID')}`
-            : '';
+        const batchCode = await stockRepository.createStockBatch(ctx, codeVariant, {
+            priceSnapshot: variant.price,
+            unitCostPerUnit: unitCost,
+            quantityAdded: lines.length
+        });
+        const profit = variant.price - unitCost;
+        let count = 0;
+        for (const line of lines) {
+            await stockRepository.addStock(ctx, codeVariant, line, profit, null, {
+                stockBatchId: batchCode,
+                unitCost,
+                unitCostSource: UnitCostSource.INPUT
+            });
+            count++;
+        }
 
         await ctx.reply(
             `*Stock berhasil ditambahkan*\n\n` +
             `Variant: \`${codeVariant}\`\n` +
-            `*Total ditambahkan:* ${count} item${profitInfo}`
+            `*Total ditambahkan:* ${count} item\n` +
+            formatUnitCostSummary(variant.price, unitCost)
         );
 
         return true;
