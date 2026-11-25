@@ -177,17 +177,21 @@ describe.each(flows)('%s stores the stock order profit', (name, run) => {
 });
 
 describe('QRIS checkout fee', () => {
-    test('takes the gateway fee off when the seller bears it, and records who pays', async () => {
+    test('the transaction schema has no fee_paid_by, so settlement keeps deducting payment_fee', () => {
+        expect(require('../src/database/models/transactionModels').schema.path('fee_paid_by')).toBeUndefined();
+    });
+
+    test('takes the gateway fee off when the seller bears it, and does not store the payer', async () => {
         arrange({ units: [unit(30000, 'input')], fee: 2000, feePaidBy: 'merchant' });
         await payWithQris(ctx);
         expect(created.profit).toBe(18000);
-        expect(created.fee_paid_by).toBe('merchant');
+        expect(created).not.toHaveProperty('fee_paid_by');
     });
 
     test('ignores the gateway fee when the buyer pays it', async () => {
         arrange({ units: [unit(30000, 'input')], fee: 2000, feePaidBy: 'customer' });
         await payWithQris(ctx);
         expect(created.profit).toBe(20000);
-        expect(created.fee_paid_by).toBe('customer');
+        expect(created).not.toHaveProperty('fee_paid_by');
     });
 });

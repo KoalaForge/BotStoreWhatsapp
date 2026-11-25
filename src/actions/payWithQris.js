@@ -166,7 +166,6 @@ async function payWithQris(ctx) {
             orderQuantity: orderAmount,
             formattedDate: formattedDate,
             payment_fee: gatewayFee,
-            fee_paid_by: feePaidBy,
             totalPrice: finalAmount,
             chatId: chatId,
             messageId: messageId,

@@ -169,7 +169,7 @@ class OrderService {
      * @param {number} params.markupPerUnit - Markup per unit (reseller only)
      * @param {number} params.quantity - Order quantity
      * @param {number} params.voucherDiscount - Voucher discount amount
-     * @param {Object} params.order - { voucherDiscount, payment_fee, fee_paid_by } as stored on the transaction
+     * @param {Object} params.order - { payment_fee, fee_paid_by }; fee_paid_by is only an input here and is never stored on the transaction
      * @param {Array} params.items - [{ unit_price, data: stock snapshots }]
      * @returns {number} - Calculated profit
      */

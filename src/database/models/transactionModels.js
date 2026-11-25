@@ -53,11 +53,6 @@ const transactionSchema = new Schema({
         type: Number,
         required: true
     },
-    fee_paid_by: {
-        type: String,
-        enum: ['customer', 'merchant'],
-        required: false
-    },
     orderData: {
         type: String,
         required: false,
