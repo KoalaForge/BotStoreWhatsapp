@@ -39,6 +39,7 @@ async function restoreStockRecord(context, stockRecord, isPlatform) {
 
     const lineage = {
         unitCost: stockRecord.unitCost,
+        unitCostSource: stockRecord.unitCostSource,
         stockBatchId: stockRecord.stockBatchId,
         stockOriginId: stockRecord.stockOriginId
     };

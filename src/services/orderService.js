@@ -470,7 +470,7 @@ class OrderService {
                 profit: stock.profit || 0
             };
 
-            for (const key of ['unitCost', 'stockBatchId', 'stockOriginId', 'stockSchemaVersion', 'reservationToken']) {
+            for (const key of ['unitCost', 'unitCostSource', 'stockBatchId', 'stockOriginId', 'stockSchemaVersion', 'reservationToken']) {
                 if (stock[key] !== null && stock[key] !== undefined) consumedSnapshot[key] = stock[key];
             }
 
@@ -492,7 +492,7 @@ class OrderService {
                 updatedAt: stock.updatedAt
         };
 
-        for (const key of ['unitCost', 'stockBatchId', 'stockOriginId', 'stockSchemaVersion', 'reservationToken']) {
+        for (const key of ['unitCost', 'unitCostSource', 'stockBatchId', 'stockOriginId', 'stockSchemaVersion', 'reservationToken']) {
             if (stock[key] !== null && stock[key] !== undefined) snapshot[key] = stock[key];
         }
 

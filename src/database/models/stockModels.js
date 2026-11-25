@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
+const { UNIT_COST_SOURCES } = require('../../enums/UnitCostSource');
 
 const stockVariantsSchema = new Schema({
     codeVariant: {
@@ -18,6 +19,11 @@ const stockVariantsSchema = new Schema({
         type: Number,
         required: false,
         default: null
+    },
+    unitCostSource: {
+        type: String,
+        enum: UNIT_COST_SOURCES,
+        required: false
     },
     stockBatchId: {
         type: String,
