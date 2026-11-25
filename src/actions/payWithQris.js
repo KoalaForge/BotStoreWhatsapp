@@ -112,13 +112,13 @@ async function payWithQris(ctx) {
             throw stockErr;
         }
 
-        const { profit, stockItems } = stockResult;
+        const { stockItems } = stockResult;
         claimedStockItems = stockItems;
 
         await ctx.reply("⏳ Membuat pembayaran...");
 
         // Generate QRIS for product purchase (includes gateway fee calculation)
-        const { qrisImage, transactionId, messageText: qrisMessage, formattedDate, formattedDateFile, gatewayFee, finalAmount, paymentMethodCode, gatewayReference, expiresAt } =
+        const { qrisImage, transactionId, messageText: qrisMessage, formattedDate, formattedDateFile, gatewayFee, feePaidBy, finalAmount, paymentMethodCode, gatewayReference, expiresAt } =
             await qrisService.generateProductQRIS({
                 ctx,
                 totalAmount,
@@ -152,8 +152,10 @@ async function payWithQris(ctx) {
             isReseller: isResellerOrder,
             markupPerUnit,
             quantity: orderAmount,
-            stockProfit: profit,
-            voucherDiscount
+            voucherDiscount,
+            // The fee and who bears it are only known now that the QR exists
+            order: { payment_fee: gatewayFee, fee_paid_by: feePaidBy },
+            items: [{ unit_price: effectivePrice, data: stockItems }]
         });
 
         // Create pending transaction record

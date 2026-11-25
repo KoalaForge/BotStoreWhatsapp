@@ -457,13 +457,13 @@ function formatLevel1(rows, startDate, endDate) {
             text += `*${v._id.variant_name || v._id.codeVariant || 'Langsung'}*\n`;
             text += `- ${v.transactionCount} trx | ${v.totalQuantity} item\n`;
             text += `- Pendapatan: ${formatMoney(v.totalRevenue)}\n`;
-            if (v.totalProfit > 0) text += `- Profit: ${formatMoney(v.totalProfit)}\n`;
+            if (v.totalProfit !== 0) text += `- Profit: ${formatMoney(v.totalProfit)}\n`;
             text += '\n';
         }
 
         text += `Subtotal: ${p.totalTrx} trx | ${p.totalQty} item\n`;
         text += `Pendapatan: *${formatMoney(p.totalRevenue)}*`;
-        if (p.totalProfit > 0) text += ` | Profit: *${formatMoney(p.totalProfit)}*`;
+        if (p.totalProfit !== 0) text += ` | Profit: *${formatMoney(p.totalProfit)}*`;
 
         messages.push(...splitMessages(text));
 
@@ -477,7 +477,7 @@ function formatLevel1(rows, startDate, endDate) {
         let summary = `\n*TOTAL KESELURUHAN*\n`;
         summary += `- ${grandTrx} transaksi | ${grandQty} item terjual\n`;
         summary += `- Pendapatan: *${formatMoney(grandRevenue)}*\n`;
-        if (grandProfit > 0) summary += `- Profit: *${formatMoney(grandProfit)}*\n`;
+        if (grandProfit !== 0) summary += `- Profit: *${formatMoney(grandProfit)}*\n`;
         summary += `\n${moment().tz(TZ).format('DD/MM/YYYY HH:mm')} WIB`;
         messages.push(summary);
     } else if (messages.length > 0) {
@@ -606,3 +606,4 @@ const recapProduct = async (ctx) => {
 };
 
 module.exports = recapProduct;
+module.exports.formatLevel1 = formatLevel1;

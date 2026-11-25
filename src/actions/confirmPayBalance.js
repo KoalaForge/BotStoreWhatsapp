@@ -146,7 +146,7 @@ async function confirmPayBalance(ctx) {
             throw stockErr;
         }
 
-        const { dataStock, profit, stockItems } = stockResult;
+        const { dataStock, stockItems } = stockResult;
         claimedStockItems = stockItems;
 
         // Stock secured — now safe to consume the confirmation message + show processing toast
@@ -162,8 +162,9 @@ async function confirmPayBalance(ctx) {
             isReseller: isResellerOrder,
             markupPerUnit,
             quantity: orderAmount,
-            stockProfit: profit,
-            voucherDiscount
+            voucherDiscount,
+            order: { payment_fee: 0 },
+            items: [{ unit_price: effectivePrice, data: stockItems }]
         });
 
         // Balance payment is auto-settled (no waiting period)
