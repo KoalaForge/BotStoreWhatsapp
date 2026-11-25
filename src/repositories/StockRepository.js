@@ -121,6 +121,20 @@ class StockRepository extends BaseRepository {
         return batchCode;
     }
 
+    /**
+     * Keep the stored profit estimate of available stock in step with the
+     * selling price. Stock with an unknown cost keeps its old profit.
+     */
+    async recalculateAvailableProfit(context, codeVariant, price) {
+        const resolvedContext = await this._ensureContext(context);
+        const ownerFilter = this._buildFilter(resolvedContext, { codeVariant, unitCost: { $type: 'number' } });
+
+        return await this.model.updateMany(
+            this._withAvailabilityFilter(ownerFilter),
+            [{ $set: { profit: { $subtract: [price, '$unitCost'] } } }]
+        );
+    }
+
     async claimStock(context, codeVariant, reservation) {
         const resolvedContext = await this._ensureContext(context);
         const normalizedCode = this._normalizeValue(codeVariant);

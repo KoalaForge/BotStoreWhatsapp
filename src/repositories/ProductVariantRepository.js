@@ -3,6 +3,7 @@ const ProductVariantModel = require('../database/models/productsVariantModels');
 const IsolationStrategy = require('./IsolationStrategy');
 const variantSearchCache = require('../state/variantSearchCache');
 const modeService = require('../services/modeService');
+const stockRepository = require('./StockRepository');
 
 /**
  * Product Variant Repository
@@ -95,7 +96,8 @@ class ProductVariantRepository extends BaseRepository {
     }
 
     /**
-     * Update variant price (case-insensitive codeVariant)
+     * Update variant price (case-insensitive codeVariant).
+     * The only place a price changes, so stock profit is recomputed here.
      * @param {Object} context - Repository context
      * @param {string} codeVariant - Variant code
      * @param {number} price - New price
@@ -104,6 +106,7 @@ class ProductVariantRepository extends BaseRepository {
     async updatePrice(context, codeVariant, price) {
         const result = await this.updateOne(context, { codeVariant }, { $set: { price } });
         this._invalidateSearchCache(context);
+        await stockRepository.recalculateAvailableProfit(context, codeVariant, price);
         return result;
     }
 
