@@ -21,14 +21,20 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 describe('changing a variant price', () => {
-    test('recomputes profit of the owner\'s available stock with a known cost', async () => {
+    test('recomputes profit of the owner\'s available stock with a marked cost', async () => {
         await productVariantRepository.updatePrice(ctx, 'CANVA-1B', 8000);
 
         expect(updateStock).toHaveBeenCalledTimes(1);
         const [filter, update] = updateStock.mock.calls[0];
         expect(filter).toEqual({
             $and: [
-                { ownerId: 'owner-1', codeVariant: 'canva-1b', unitCost: { $type: 'number' } },
+                {
+                    ownerId: 'owner-1',
+                    codeVariant: 'canva-1b',
+                    unitCost: { $type: 'number' },
+                    // Unmarked costs may be invented by the legacy backfill
+                    unitCostSource: { $in: ['input', 'estimated'] }
+                },
                 {
                     $or: [
                         { stockSchemaVersion: { $exists: false }, soldAt: null },

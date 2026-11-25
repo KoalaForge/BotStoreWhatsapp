@@ -3,7 +3,7 @@ const StockModel = require('../database/models/stockModels');
 const StockBatchModel = require('../database/models/stockBatchModels');
 const IsolationStrategy = require('./IsolationStrategy');
 const { randomUUID } = require('crypto');
-const { resolveUnitCostSource } = require('../enums/UnitCostSource');
+const { UnitCostSource, resolveUnitCostSource } = require('../enums/UnitCostSource');
 
 const DEFAULT_RESERVATION_TTL_MS = 15 * 60 * 1000;
 const MALFORMED_RESERVATION_GRACE_MS = 15 * 60 * 1000;
@@ -123,11 +123,17 @@ class StockRepository extends BaseRepository {
 
     /**
      * Keep the stored profit estimate of available stock in step with the
-     * selling price. Stock with an unknown cost keeps its old profit.
+     * selling price. Stock with an unknown or unmarked cost keeps its old
+     * profit: the legacy backfill invented some unmarked costs, and a new
+     * profit would make them look real.
      */
     async recalculateAvailableProfit(context, codeVariant, price) {
         const resolvedContext = await this._ensureContext(context);
-        const ownerFilter = this._buildFilter(resolvedContext, { codeVariant, unitCost: { $type: 'number' } });
+        const ownerFilter = this._buildFilter(resolvedContext, {
+            codeVariant,
+            unitCost: { $type: 'number' },
+            unitCostSource: { $in: [UnitCostSource.INPUT, UnitCostSource.ESTIMATED] }
+        });
 
         return await this.model.updateMany(
             this._withAvailabilityFilter(ownerFilter),
