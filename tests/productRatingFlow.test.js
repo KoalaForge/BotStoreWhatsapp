@@ -23,7 +23,6 @@ jest.mock('../src/state/snkState', () => ({
 }));
 jest.mock('../src/state/addStockState', () => ({ isAwaitingStockData: jest.fn().mockReturnValue(false) }));
 jest.mock('../src/state/delStockState', () => ({ isAwaiting: jest.fn().mockReturnValue(false) }));
-jest.mock('../src/state/profitStockState', () => ({ isAwaiting: jest.fn().mockReturnValue(false) }));
 jest.mock('../src/state/buyerNotesState', () => ({}));
 jest.mock('../src/state/screenState', () => ({
     getScreen: jest.fn(),

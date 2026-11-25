@@ -5,7 +5,6 @@ const voucherState = require('../state/voucherState');
 const snkState = require('../state/snkState');
 const addStockState = require('../state/addStockState');
 const delStockState = require('../state/delStockState');
-const profitStockState = require('../state/profitStockState');
 const buyerNotesState = require('../state/buyerNotesState');
 const screenState = require('../state/screenState');
 const menuCooldownState = require('../state/menuCooldownState');
@@ -51,12 +50,6 @@ function registerHandlers(router) {
         // DelStock state check (sync, O(1))
         if (delStockState.isAwaiting(userId)) {
             const handled = await command.handleDelStockDataInput(ctx);
-            if (handled) return;
-        }
-
-        // SetProfitStock state check (sync, O(1))
-        if (profitStockState.isAwaiting(userId)) {
-            const handled = await command.handleProfitStockDataInput(ctx);
             if (handled) return;
         }
 
