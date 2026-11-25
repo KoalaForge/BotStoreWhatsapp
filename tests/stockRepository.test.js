@@ -34,7 +34,11 @@ describe('StockRepository.createStockBatch', () => {
             }
         };
 
-        await stockRepository.createStockBatch(ctx, 'CANVA-1B', 5000, 2);
+        await stockRepository.createStockBatch(ctx, 'CANVA-1B', {
+            priceSnapshot: 10000,
+            unitCostPerUnit: 5000,
+            quantityAdded: 2
+        });
 
         expect(StockBatchModel.create).toHaveBeenCalledWith(expect.objectContaining({
             codeVariant: 'canva-1b',
@@ -48,8 +52,7 @@ describe('StockRepository.createStockBatch', () => {
         await stockRepository.createStockBatch(
             { repositoryContext: { botId: null, ownerId: null, mode: 'SINGLE' } },
             'CANVA-1B',
-            5000,
-            2
+            { priceSnapshot: 10000, unitCostPerUnit: 5000, quantityAdded: 2 }
         );
 
         const data = StockBatchModel.create.mock.calls[0][0];

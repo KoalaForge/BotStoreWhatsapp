@@ -102,14 +102,16 @@ class StockRepository extends BaseRepository {
         return await this._releaseReservations(scopedFilter);
     }
 
-    async createStockBatch(context, codeVariant, profitPerUnit, quantityAdded) {
+    async createStockBatch(context, codeVariant, { priceSnapshot, unitCostPerUnit, quantityAdded }) {
         const resolvedContext = await this._ensureContext(context);
         const batchCode = `WA-${randomUUID()}`;
         const data = this._buildData(resolvedContext, {
             _id: batchCode,
             batchCode,
             codeVariant: this._normalizeValue(codeVariant),
-            profitPerUnit,
+            priceSnapshot,
+            unitCostPerUnit,
+            profitPerUnit: priceSnapshot - unitCostPerUnit,
             quantityAdded,
             sourceSystem: 'orkut-whatsapp',
             status: 'completed'
